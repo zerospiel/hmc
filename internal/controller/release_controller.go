@@ -178,6 +178,7 @@ func (r *ReleaseReconciler) ensureManagement(ctx context.Context) error {
 	mgmtObj := &hmc.Management{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       hmc.ManagementName,
+			Labels:     map[string]string{"hmc.mirantis.com/component": "hmc"},
 			Finalizers: []string{hmc.ManagementFinalizer},
 		},
 	}

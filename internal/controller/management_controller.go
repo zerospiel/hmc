@@ -230,7 +230,8 @@ func (r *ManagementReconciler) ensureTemplateManagement(ctx context.Context, mgm
 	l.Info("Ensuring TemplateManagement is created")
 	tmObj := &hmc.TemplateManagement{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: hmc.TemplateManagementName,
+			Name:   hmc.TemplateManagementName,
+			Labels: map[string]string{"hmc.mirantis.com/component": "hmc"},
 			OwnerReferences: []metav1.OwnerReference{
 				{
 					APIVersion: hmc.GroupVersion.String(),
