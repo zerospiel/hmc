@@ -20,6 +20,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	// Name to label most of the HMC-related components.
+	// Mostly utilized by the backup feature.
+	GenericComponentLabelName = "hmc.mirantis.com/component"
+	// Component label value for the HMC-related components.
+	GenericComponentLabelValueHMC = "hmc"
+)
+
 // BackupSpec defines the desired state of Backup
 type BackupSpec struct {
 	// Oneshot indicates whether the Backup should not be scheduled
