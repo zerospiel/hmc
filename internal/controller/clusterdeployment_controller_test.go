@@ -373,10 +373,12 @@ var _ = Describe("ClusterDeployment Controller", func() {
 					Spec: hmc.ClusterDeploymentSpec{
 						Template:   clusterTemplate.Name,
 						Credential: awsCredential.Name,
-						Services: []hmc.ServiceSpec{
-							{
-								Template: serviceTemplate.Name,
-								Name:     "test-service",
+						ServiceSpec: hmc.ServiceSpec{
+							Services: []hmc.Service{
+								{
+									Template: serviceTemplate.Name,
+									Name:     "test-service",
+								},
 							},
 						},
 						Config: &apiextensionsv1.JSON{
