@@ -64,6 +64,12 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		backup.WithVeleroSystemNamespace(r.systemNamespace),
 	)
 
+	// TODO: should the mgmt be fetched always? how to properly process BSL?
+	// TODO: revise the ctrl logic, add watches/owns(?) for velero resources
+	// TODO: collect backup spec (especially everything related to the creds)
+	// TODO: install velero plugins (wathc BSL, then list backups? amend the ctrl logic regarding this point)
+
+	var cronSchedule string
 	if apierrors.IsNotFound(err) {
 		// if non-scheduled backup is not found(deleted), then just skip the error
 		// if scheduled backup is not found, then it either does not exist yet
@@ -94,9 +100,11 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		// required during creation
 		backupInstance.Name = req.Name
 		backupInstance.Namespace = req.Namespace
+
+		cronSchedule = mgmt.Spec.Backup.Schedule
 	}
 
-	btype, err := bcfg.GetBackupType(ctx, backupInstance, req.Name)
+	btype, err := bcfg.GetBackupType(ctx, backupInstance, req.Name) // TODO: here it is almost always gets the mgmt (but not always)
 	if err != nil {
 		l.Error(err, "failed to determine backup type")
 		return ctrl.Result{}, err
@@ -106,11 +114,20 @@ func (r *BackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	case backup.TypeNone:
 		l.Info("There are nothing to reconcile, management does not exists")
 		// TODO: do we need to reconcile/delete/pause schedules in this case?
+		// TODO: we need to pause if mgmt.backup.enabled == false
 		return ctrl.Result{}, nil
 	case backup.TypeBackup:
 		return ctrl.Result{}, bcfg.ReconcileBackup(ctx, backupInstance)
 	case backup.TypeSchedule:
-		return ctrl.Result{}, bcfg.ReconcileScheduledBackup(ctx, backupInstance)
+		if cronSchedule == "" {
+			mgmt := new(hmcv1alpha1.Management)
+			if err := r.Client.Get(ctx, req.NamespacedName, mgmt); err != nil {
+				l.Error(err, "unable to fetch Management")
+				return ctrl.Result{}, err
+			}
+			cronSchedule = mgmt.Spec.Backup.Schedule
+		}
+		return ctrl.Result{}, bcfg.ReconcileScheduledBackup(ctx, backupInstance, cronSchedule)
 	}
 
 	return ctrl.Result{}, nil

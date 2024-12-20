@@ -16,15 +16,60 @@ package backup
 
 import (
 	"context"
+	"fmt"
+
+	velerov1api "github.com/zerospiel/velero/pkg/apis/velero/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	hmcv1alpha1 "github.com/Mirantis/hmc/api/v1alpha1"
 )
 
-func (*Config) ReconcileBackup(ctx context.Context, backup *hmcv1alpha1.Backup) error {
+func (c *Config) ReconcileBackup(ctx context.Context, backup *hmcv1alpha1.Backup) error {
 	if backup == nil {
 		return nil
 	}
 
-	_ = ctx
-	return nil
+	if backup.Status.Reference == nil { // backup is not yet created
+		veleroBackup := &velerov1api.Backup{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        backup.Name,
+				Namespace:   c.systemNamespace,
+				Annotations: map[string]string{Anno: ""},
+			},
+			Spec: velerov1api.BackupSpec{}, // TODO: collect the spec / selectors
+		}
+
+		if err := c.cl.Create(ctx, veleroBackup); client.IgnoreAlreadyExists(err) != nil { // avoid err-loop on patch error
+			return fmt.Errorf("failed to create velero Backup: %w", err)
+		}
+
+		backup.Status.Reference = &corev1.ObjectReference{
+			APIVersion: velerov1api.SchemeGroupVersion.String(),
+			Kind:       "Backup",
+			Namespace:  veleroBackup.Namespace,
+			Name:       veleroBackup.Name,
+		}
+
+		if err := c.cl.Status().Patch(ctx, veleroBackup, client.Merge); err != nil {
+			return fmt.Errorf("failed to patch scheduled backup status with updated reference: %w", err)
+		}
+
+		// velero schedule has been created, nothing yet to update here
+		return nil
+	}
+
+	// if backup does not exist then it has not been run yet
+	veleroBackup := new(velerov1api.Backup)
+	if err := c.cl.Get(ctx, client.ObjectKey{
+		Name:      backup.Name,
+		Namespace: c.systemNamespace,
+	}, veleroBackup); err != nil {
+		return fmt.Errorf("failed to get velero Backup: %w", err)
+	}
+
+	backup.Status.LastBackup = &veleroBackup.Status
+
+	return c.cl.Status().Update(ctx, backup)
 }
