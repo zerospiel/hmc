@@ -472,7 +472,6 @@ func (r *ClusterDeploymentReconciler) updateServices(ctx context.Context, mc *hm
 			StopOnConflict:       mc.Spec.ServiceSpec.StopOnConflict,
 			Reload:               mc.Spec.ServiceSpec.Reload,
 			TemplateResourceRefs: mc.Spec.ServiceSpec.TemplateResourceRefs,
-			PolicyRefs:           mc.Spec.ServiceSpec.PolicyRefs,
 		}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile Profile: %w", err)
 	}

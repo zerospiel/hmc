@@ -72,11 +72,6 @@ type ServiceSpec struct {
 	// TemplateResourceRefs is a list of resources to collect from the management cluster,
 	// the values from which can be used in templates.
 	TemplateResourceRefs []sveltosv1beta1.TemplateResourceRef `json:"templateResourceRefs,omitempty"`
-	// PolicyRefs is a list of kubernetes resources that need to be deployed in matching clusters.
-	// These resources may contain static values or leverage Go templates for dynamic customization.
-	// When expressed as templates, the values are rendered using data from resources
-	// (like Cluster & TemplateResourceRefs) within the management cluster before deployement.
-	PolicyRefs []sveltosv1beta1.PolicyRef `json:"policyRefs,omitempty"`
 
 	// +kubebuilder:default:=100
 	// +kubebuilder:validation:Minimum=1

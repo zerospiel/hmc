@@ -90,62 +90,6 @@ spec:
               serviceSpec:
                 description: ServiceSpec is spec related to deployment of services.
                 properties:
-                  policyRefs:
-                    description: |-
-                      PolicyRefs is a list of kubernetes resources that need to be deployed in matching clusters.
-                      These resources may contain static values or leverage Go templates for dynamic customization.
-                      When expressed as templates, the values are rendered using data from resources
-                      (like Cluster & TemplateResourceRefs) within the management cluster before deployement.
-                    items:
-                      properties:
-                        deploymentType:
-                          default: Remote
-                          description: |-
-                            DeploymentType indicates whether resources need to be deployed
-                            into the management cluster (local) or the managed cluster (remote)
-                          enum:
-                          - Local
-                          - Remote
-                          type: string
-                        kind:
-                          description: |-
-                            Kind of the resource. Supported kinds are:
-                            - ConfigMap/Secret
-                            - flux GitRepository;OCIRepository;Bucket
-                          enum:
-                          - GitRepository
-                          - OCIRepository
-                          - Bucket
-                          - ConfigMap
-                          - Secret
-                          type: string
-                        name:
-                          description: |-
-                            Name of the referenced resource.
-                            Name can be expressed as a template and instantiate using
-                            - cluster namespace: .Cluster.metadata.namespace
-                            - cluster name: .Cluster.metadata.name
-                            - cluster type: .Cluster.kind
-                          minLength: 1
-                          type: string
-                        namespace:
-                          description: |-
-                            Namespace of the referenced resource.
-                            For ClusterProfile namespace can be left empty. In such a case, namespace will
-                            be implicit set to cluster's namespace.
-                            For Profile namespace must be left empty. Profile namespace will be used.
-                          type: string
-                        path:
-                          description: |-
-                            Path to the directory containing the YAML files.
-                            Defaults to 'None', which translates to the root path of the SourceRef.
-                            Used only for GitRepository;OCIRepository;Bucket
-                          type: string
-                      required:
-                      - kind
-                      - name
-                      type: object
-                    type: array
                   priority:
                     default: 100
                     description: |-
