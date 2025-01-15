@@ -9,7 +9,7 @@ spec:
   config:
     controlPlaneNumber: 1
     workersNumber: 1
-    controlPlane:
+    controlplane:
       flavor: ${OPENSTACK_CONTROL_PLANE_MACHINE_FLAVOR}
       image:
         filter:
@@ -19,4 +19,11 @@ spec:
       image:
         filter:
           name: ${OPENSTACK_IMAGE_NAME}
+    externalNetwork:
+      filter:
+        name: "public"
     authURL: ${OS_AUTH_URL}
+    identityRef:
+      name: "openstack-cloud-config"
+      cloudName: "openstack"
+      region: ${OS_REGION_NAME}
