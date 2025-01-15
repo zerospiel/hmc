@@ -1,11 +1,11 @@
-apiVersion: k0rdent.mirantis.com/v1alpha1
+apiVersion: hmc.mirantis.com/v1alpha1
 kind: ClusterDeployment
 metadata:
-  name: adopted-dev
+  name: ${CLUSTER_DEPLOYMENT_NAME}
   namespace: ${NAMESPACE}
 spec:
   template: adopted-cluster-0-0-2
-  credential: adopted-cluster-cred
+  credential: ${ADOPTED_CREDENTIAL}
   config: {}
   serviceSpec:
     - template: kyverno-3-2-6
