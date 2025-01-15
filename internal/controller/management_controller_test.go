@@ -277,8 +277,8 @@ var _ = Describe("Management Controller", func() {
 			controllerReconciler := &ManagementReconciler{
 				Client:          k8sClient,
 				Scheme:          k8sClient.Scheme(),
-				SystemNamespace: utils.DefaultSystemNamespace,
 				DynamicClient:   dynamicClient,
+				SystemNamespace: utils.DefaultSystemNamespace,
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{

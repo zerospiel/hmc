@@ -42,7 +42,7 @@ import (
 
 // MultiClusterServiceReconciler reconciles a MultiClusterService object
 type MultiClusterServiceReconciler struct {
-	client.Client
+	Client          client.Client
 	SystemNamespace string
 }
 
@@ -52,7 +52,7 @@ func (r *MultiClusterServiceReconciler) Reconcile(ctx context.Context, req ctrl.
 	l.Info("Reconciling MultiClusterService")
 
 	mcs := &kcm.MultiClusterService{}
-	err := r.Get(ctx, req.NamespacedName, mcs)
+	err := r.Client.Get(ctx, req.NamespacedName, mcs)
 	if apierrors.IsNotFound(err) {
 		l.Info("MultiClusterService not found, ignoring since object must be deleted")
 		return ctrl.Result{}, nil
@@ -72,7 +72,7 @@ func (r *MultiClusterServiceReconciler) Reconcile(ctx context.Context, req ctrl.
 
 func (r *MultiClusterServiceReconciler) reconcileUpdate(ctx context.Context, mcs *kcm.MultiClusterService) (_ ctrl.Result, err error) {
 	if utils.AddLabel(mcs, kcm.GenericComponentLabelName, kcm.GenericComponentLabelValueKCM) {
-		if err := r.Update(ctx, mcs); err != nil {
+		if err := r.Client.Update(ctx, mcs); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to update labels: %w", err)
 		}
 		return ctrl.Result{Requeue: true}, nil // generation has not changed, need explicit requeue
@@ -153,7 +153,7 @@ func (r *MultiClusterServiceReconciler) reconcileUpdate(ctx context.Context, mcs
 	// will ultimately return the error in servicesErr instead of nil.
 	profile := sveltosv1beta1.ClusterProfile{}
 	profileRef := client.ObjectKey{Name: mcs.Name}
-	if servicesErr = r.Get(ctx, profileRef, &profile); servicesErr != nil {
+	if servicesErr = r.Client.Get(ctx, profileRef, &profile); servicesErr != nil {
 		servicesErr = fmt.Errorf("failed to get ClusterProfile %s to fetch status from its associated ClusterSummary: %w", profileRef.String(), servicesErr)
 		return ctrl.Result{}, nil
 	}
@@ -173,7 +173,7 @@ func (r *MultiClusterServiceReconciler) updateStatus(ctx context.Context, mcs *k
 	mcs.Status.ObservedGeneration = mcs.Generation
 	mcs.Status.Conditions = updateStatusConditions(mcs.Status.Conditions, "MultiClusterService is ready")
 
-	if err := r.Status().Update(ctx, mcs); err != nil {
+	if err := r.Client.Status().Update(ctx, mcs); err != nil {
 		return fmt.Errorf("failed to update status for MultiClusterService %s/%s: %w", mcs.Namespace, mcs.Name, err)
 	}
 
@@ -311,6 +311,8 @@ func requeueSveltosProfileForClusterSummary(ctx context.Context, obj client.Obje
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *MultiClusterServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.Client = mgr.GetClient()
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kcm.MultiClusterService{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(&sveltosv1beta1.ClusterSummary{},
