@@ -139,6 +139,9 @@ func (r *MultiClusterServiceReconciler) reconcileUpdate(ctx context.Context, mcs
 			StopOnConflict:       mcs.Spec.ServiceSpec.StopOnConflict,
 			Reload:               mcs.Spec.ServiceSpec.Reload,
 			TemplateResourceRefs: mcs.Spec.ServiceSpec.TemplateResourceRefs,
+			SyncMode:             mcs.Spec.ServiceSpec.SyncMode,
+			DriftIgnore:          mcs.Spec.ServiceSpec.DriftIgnore,
+			DriftExclusions:      mcs.Spec.ServiceSpec.DriftExclusions,
 		}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile ClusterProfile: %w", err)
 	}
