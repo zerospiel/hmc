@@ -4,10 +4,11 @@ metadata:
   name: azure-aks-${CLUSTER_NAME_SUFFIX}
   namespace: ${NAMESPACE}
 spec:
-  template: azure-aks-0-0-2
+  template: azure-aks-0-0-3
   credential: azure-aks-credential
   propagateCredentials: false
   config:
+    clusterLabels: {}
     location: "westus"
     machinePools:
       system:
