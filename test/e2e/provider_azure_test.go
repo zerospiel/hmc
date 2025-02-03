@@ -28,22 +28,32 @@ import (
 	"github.com/K0rdent/kcm/test/e2e/clusterdeployment"
 	"github.com/K0rdent/kcm/test/e2e/clusterdeployment/azure"
 	"github.com/K0rdent/kcm/test/e2e/clusterdeployment/clusteridentity"
+	"github.com/K0rdent/kcm/test/e2e/config"
 	"github.com/K0rdent/kcm/test/e2e/kubeclient"
+	"github.com/K0rdent/kcm/test/e2e/logs"
+	"github.com/K0rdent/kcm/test/e2e/templates"
 	"github.com/K0rdent/kcm/test/utils"
 )
 
 var _ = Context("Azure Templates", Label("provider:cloud", "provider:azure"), Ordered, func() {
 	var (
-		kc                      *kubeclient.KubeClient
-		standaloneClient        *kubeclient.KubeClient
-		standaloneDeleteFunc    func() error
-		hostedDeleteFunc        func() error
-		kubecfgDeleteFunc       func() error
-		hostedKubecfgDeleteFunc func() error
-		sdName                  string
+		kc                    *kubeclient.KubeClient
+		standaloneClusters    = make(map[string]clusterInfo)
+		hostedDeleteFuncs     []func() error
+		standaloneDeleteFuncs []func() error
+		kubeconfigDeleteFuncs []func() error
+
+		providerConfigs []config.ProviderTestingConfig
 	)
 
 	BeforeAll(func() {
+		By("get testing configuration")
+		providerConfigs = config.Config[config.TestingProviderAzure]
+
+		if len(providerConfigs) == 0 {
+			Skip("Azure ClusterDeployment testing is skipped")
+		}
+
 		By("ensuring Azure credentials are set")
 		kc = kubeclient.NewFromLocal(internalutils.DefaultSystemNamespace)
 		ci := clusteridentity.New(kc, clusterdeployment.ProviderAzure)
@@ -51,27 +61,38 @@ var _ = Context("Azure Templates", Label("provider:cloud", "provider:azure"), Or
 		Expect(os.Setenv(clusterdeployment.EnvVarAzureClusterIdentity, ci.IdentityName)).Should(Succeed())
 	})
 
-	AfterEach(func() {
+	AfterAll(func() {
 		// If we failed collect logs from each of the affiliated controllers
 		// as well as the output of clusterctl to store as artifacts.
 		if CurrentSpecReport().Failed() && cleanup() {
-			By("collecting failure logs from controllers")
 			if kc != nil {
-				collectLogArtifacts(kc, sdName, clusterdeployment.ProviderAzure, clusterdeployment.ProviderCAPI)
+				By("collecting failure logs from the management controllers")
+				var standaloneClusterNames []string
+				for clusterName := range standaloneClusters {
+					standaloneClusterNames = append(standaloneClusterNames, clusterName)
+				}
+				logs.Collector{
+					Client:        kc,
+					ProviderTypes: []clusterdeployment.ProviderType{clusterdeployment.ProviderAzure, clusterdeployment.ProviderCAPI},
+					ClusterNames:  standaloneClusterNames,
+				}.CollectAll()
 			}
-			if standaloneClient != nil {
-				collectLogArtifacts(standaloneClient, sdName, clusterdeployment.ProviderAzure, clusterdeployment.ProviderCAPI)
+			for clusterName, clusterInfo := range standaloneClusters {
+				if clusterInfo.client != nil {
+					By(fmt.Sprintf("collecting failure logs from controllers of the %s cluster", clusterName))
+					logs.Collector{
+						Client:        clusterInfo.client,
+						ProviderTypes: []clusterdeployment.ProviderType{clusterdeployment.ProviderAzure, clusterdeployment.ProviderCAPI},
+						ClusterNames:  []string{clusterInfo.hostedClusterName},
+					}.CollectAll()
+				}
 			}
 		}
 
-		By("deleting resources")
-		for _, deleteFunc := range []func() error{
-			hostedKubecfgDeleteFunc,
-			kubecfgDeleteFunc,
-			hostedDeleteFunc,
-			standaloneDeleteFunc,
-		} {
-			if deleteFunc != nil {
+		if cleanup() {
+			By("deleting resources")
+			deleteFuncs := append(hostedDeleteFuncs, append(standaloneDeleteFuncs, kubeconfigDeleteFuncs...)...)
+			for _, deleteFunc := range deleteFuncs {
 				err := deleteFunc()
 				Expect(err).NotTo(HaveOccurred())
 			}
@@ -79,110 +100,136 @@ var _ = Context("Azure Templates", Label("provider:cloud", "provider:azure"), Or
 	})
 
 	It("should work with an Azure provider", func() {
-		templateBy(clusterdeployment.TemplateAzureStandaloneCP, "creating a clusterdeployment")
-		sd := clusterdeployment.GetUnstructured(clusterdeployment.TemplateAzureStandaloneCP)
-		sdName = sd.GetName()
+		for i, testingConfig := range providerConfigs {
+			_, _ = fmt.Fprintf(GinkgoWriter, "Testing configuration:\n%s\n", testingConfig.String())
 
-		standaloneDeleteFunc = kc.CreateClusterDeployment(context.Background(), sd)
+			sdName := clusterdeployment.GenerateClusterName(fmt.Sprintf("azure-%d", i))
+			sdTemplate := testingConfig.Template
+			templateBy(templates.TemplateAzureStandaloneCP, fmt.Sprintf("creating a ClusterDeployment %s with template %s", sdName, sdTemplate))
 
-		// verify the standalone cluster is deployed correctly
-		deploymentValidator := clusterdeployment.NewProviderValidator(
-			clusterdeployment.TemplateAzureStandaloneCP,
-			sdName,
-			clusterdeployment.ValidationActionDeploy,
-		)
+			sd := clusterdeployment.GetUnstructured(templates.TemplateAzureStandaloneCP, sdName, sdTemplate)
 
-		templateBy(clusterdeployment.TemplateAzureStandaloneCP, "waiting for infrastructure provider to deploy successfully")
-		Eventually(func() error {
-			return deploymentValidator.Validate(context.Background(), kc)
-		}).WithTimeout(90 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+			standaloneDeleteFunc := kc.CreateClusterDeployment(context.Background(), sd)
+			standaloneClusters[sdName] = clusterInfo{}
+			standaloneDeleteFuncs = append(standaloneDeleteFuncs, func() error {
+				By(fmt.Sprintf("Deleting the %s ClusterDeployment", sdName))
+				err := standaloneDeleteFunc()
+				Expect(err).NotTo(HaveOccurred())
 
-		// setup environment variables for deploying the hosted template (subnet name, etc)
-		azure.SetAzureEnvironmentVariables(sdName, kc)
+				By(fmt.Sprintf("Verifying the %s ClusterDeployment deleted successfully", sdName))
+				deploymentValidator := clusterdeployment.NewProviderValidator(
+					templates.TemplateAzureStandaloneCP,
+					sdName,
+					clusterdeployment.ValidationActionDelete,
+				)
 
-		hd := clusterdeployment.GetUnstructured(clusterdeployment.TemplateAzureHostedCP)
-		hdName := hd.GetName()
+				Eventually(func() error {
+					return deploymentValidator.Validate(context.Background(), kc)
+				}).WithTimeout(10 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+				return nil
+			})
 
-		var kubeCfgPath string
-		kubeCfgPath, kubecfgDeleteFunc = kc.WriteKubeconfig(context.Background(), sdName)
+			// verify the standalone cluster is deployed correctly
+			deploymentValidator := clusterdeployment.NewProviderValidator(
+				templates.TemplateAzureStandaloneCP,
+				sdName,
+				clusterdeployment.ValidationActionDeploy,
+			)
 
-		By("Deploy onto standalone cluster")
-		GinkgoT().Setenv("KUBECONFIG", kubeCfgPath)
-		cmd := exec.Command("make", "test-apply")
-		_, err := utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(os.Unsetenv("KUBECONFIG")).To(Succeed())
+			templateBy(templates.TemplateAzureStandaloneCP, "waiting for infrastructure provider to deploy successfully")
+			Eventually(func() error {
+				return deploymentValidator.Validate(context.Background(), kc)
+			}).WithTimeout(90 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 
-		standaloneClient = kc.NewFromCluster(context.Background(), internalutils.DefaultSystemNamespace, sdName)
-		// verify the cluster is ready prior to creating credentials
-		Eventually(func() error {
-			err := verifyControllersUp(standaloneClient)
-			if err != nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Controller validation failed: %v\n", err)
-				return err
+			if testingConfig.Hosted == nil {
+				continue
 			}
-			return nil
-		}).WithTimeout(15 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 
-		Eventually(func() error {
-			err = clusterdeployment.ValidateClusterTemplates(context.Background(), standaloneClient)
-			if err != nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "cluster template validation failed: %v\n", err)
-				return err
+			// setup environment variables for deploying the hosted template (subnet name, etc)
+			azure.SetAzureEnvironmentVariables(sdName, kc)
+
+			kubeCfgPath, kubecfgDeleteFunc := kc.WriteKubeconfig(context.Background(), sdName)
+			kubeconfigDeleteFuncs = append(kubeconfigDeleteFuncs, kubecfgDeleteFunc)
+
+			By("Deploy onto standalone cluster")
+			GinkgoT().Setenv("KUBECONFIG", kubeCfgPath)
+			cmd := exec.Command("make", "test-apply")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(os.Unsetenv("KUBECONFIG")).To(Succeed())
+
+			standaloneClient := kc.NewFromCluster(context.Background(), internalutils.DefaultSystemNamespace, sdName)
+			// verify the cluster is ready prior to creating credentials
+			Eventually(func() error {
+				err := verifyControllersUp(standaloneClient)
+				if err != nil {
+					_, _ = fmt.Fprintf(GinkgoWriter, "Controller validation failed: %v\n", err)
+					return err
+				}
+				return nil
+			}).WithTimeout(15 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+
+			Eventually(func() error {
+				err = clusterdeployment.ValidateClusterTemplates(context.Background(), standaloneClient)
+				if err != nil {
+					_, _ = fmt.Fprintf(GinkgoWriter, "cluster template validation failed: %v\n", err)
+					return err
+				}
+				return nil
+			}).WithTimeout(15 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+
+			By("Create azure credential secret")
+			standaloneCi := clusteridentity.New(standaloneClient, clusterdeployment.ProviderAzure)
+			standaloneCi.WaitForValidCredential(standaloneClient)
+
+			By("Create azure credential secret")
+			clusteridentity.New(standaloneClient, clusterdeployment.ProviderAzure)
+
+			By("Create default storage class for azure-disk CSI driver")
+			azure.CreateDefaultStorageClass(standaloneClient)
+
+			hdName := clusterdeployment.GenerateClusterName(fmt.Sprintf("azure-hosted-%d", i))
+			hdTemplate := testingConfig.Hosted.Template
+			templateBy(templates.TemplateAzureHostedCP, fmt.Sprintf("creating a hosted ClusterDeployment %s with template %s", hdName, hdTemplate))
+
+			hd := clusterdeployment.GetUnstructured(templates.TemplateAzureHostedCP, hdName, hdTemplate)
+
+			templateBy(templates.TemplateAzureHostedCP, "creating a ClusterDeployment")
+			hostedDeleteFunc := standaloneClient.CreateClusterDeployment(context.Background(), hd)
+			hostedDeleteFuncs = append(hostedDeleteFuncs, func() error {
+				By(fmt.Sprintf("Deleting the %s ClusterDeployment", hdName))
+				err = hostedDeleteFunc()
+				Expect(err).NotTo(HaveOccurred())
+
+				By(fmt.Sprintf("Verifying the %s ClusterDeployment deleted successfully", hdName))
+				deploymentValidator = clusterdeployment.NewProviderValidator(
+					templates.TemplateAzureHostedCP,
+					hdName,
+					clusterdeployment.ValidationActionDelete,
+				)
+				Eventually(func() error {
+					return deploymentValidator.Validate(context.Background(), standaloneClient)
+				}).WithTimeout(10 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+				return nil
+			})
+
+			standaloneClusters[sdName] = clusterInfo{
+				client:            standaloneClient,
+				hostedClusterName: hd.GetName(),
 			}
-			return nil
-		}).WithTimeout(15 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+			templateBy(templates.TemplateAzureHostedCP, "Patching AzureCluster to ready")
+			clusterdeployment.PatchHostedClusterReady(standaloneClient, clusterdeployment.ProviderAzure, hdName)
 
-		By("Create azure credential secret")
-		standaloneCi := clusteridentity.New(standaloneClient, clusterdeployment.ProviderAzure)
-		standaloneCi.WaitForValidCredential(standaloneClient)
+			templateBy(templates.TemplateAzureHostedCP, "waiting for infrastructure to deploy successfully")
+			deploymentValidator = clusterdeployment.NewProviderValidator(
+				templates.TemplateAzureHostedCP,
+				hdName,
+				clusterdeployment.ValidationActionDeploy,
+			)
 
-		By("Create default storage class for azure-disk CSI driver")
-		azure.CreateDefaultStorageClass(standaloneClient)
-
-		templateBy(clusterdeployment.TemplateAzureHostedCP, "creating a clusterdeployment")
-		hostedDeleteFunc = standaloneClient.CreateClusterDeployment(context.Background(), hd)
-
-		templateBy(clusterdeployment.TemplateAzureHostedCP, "Patching AzureCluster to ready")
-		clusterdeployment.PatchHostedClusterReady(standaloneClient, clusterdeployment.ProviderAzure, hdName)
-
-		templateBy(clusterdeployment.TemplateAzureHostedCP, "waiting for infrastructure to deploy successfully")
-		deploymentValidator = clusterdeployment.NewProviderValidator(
-			clusterdeployment.TemplateAzureHostedCP,
-			hdName,
-			clusterdeployment.ValidationActionDeploy,
-		)
-
-		Eventually(func() error {
-			return deploymentValidator.Validate(context.Background(), standaloneClient)
-		}).WithTimeout(90 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
-
-		By("verify the deployment deletes successfully")
-		err = hostedDeleteFunc()
-		Expect(err).NotTo(HaveOccurred())
-		hostedDeleteFunc = nil
-		deploymentValidator = clusterdeployment.NewProviderValidator(
-			clusterdeployment.TemplateAzureHostedCP,
-			hdName,
-			clusterdeployment.ValidationActionDelete,
-		)
-
-		Eventually(func() error {
-			return deploymentValidator.Validate(context.Background(), standaloneClient)
-		}).WithTimeout(10 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
-
-		err = standaloneDeleteFunc()
-		Expect(err).NotTo(HaveOccurred())
-		standaloneDeleteFunc = nil
-
-		deploymentValidator = clusterdeployment.NewProviderValidator(
-			clusterdeployment.TemplateAzureStandaloneCP,
-			hdName,
-			clusterdeployment.ValidationActionDelete,
-		)
-
-		Eventually(func() error {
-			return deploymentValidator.Validate(context.Background(), kc)
-		}).WithTimeout(10 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+			Eventually(func() error {
+				return deploymentValidator.Validate(context.Background(), standaloneClient)
+			}).WithTimeout(10 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
+		}
 	})
 })

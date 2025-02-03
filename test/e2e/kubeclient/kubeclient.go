@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -33,6 +34,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/K0rdent/kcm/api/v1alpha1"
 	"github.com/K0rdent/kcm/internal/utils/status"
@@ -190,11 +192,7 @@ func (kc *KubeClient) CreateClusterDeployment(
 	kind := clusterDeployment.GetKind()
 	Expect(kind).To(Equal("ClusterDeployment"))
 
-	client := kc.GetDynamicClient(schema.GroupVersionResource{
-		Group:    "k0rdent.mirantis.com",
-		Version:  "v1alpha1",
-		Resource: "clusterdeployments",
-	}, true)
+	client := kc.GetDynamicClient(v1alpha1.GroupVersion.WithResource("clusterdeployments"), true)
 
 	_, err := client.Create(ctx, clusterDeployment, metav1.CreateOptions{})
 	if !apierrors.IsAlreadyExists(err) {
@@ -202,12 +200,29 @@ func (kc *KubeClient) CreateClusterDeployment(
 	}
 
 	return func() error {
-		err := client.Delete(ctx, clusterDeployment.GetName(), metav1.DeleteOptions{})
-		if apierrors.IsNotFound(err) {
-			return nil
+		name := clusterDeployment.GetName()
+		if err := client.Delete(ctx, name, metav1.DeleteOptions{}); crclient.IgnoreNotFound(err) != nil {
+			return err
 		}
-		return err
+		Eventually(func() bool {
+			_, err := client.Get(ctx, name, metav1.GetOptions{})
+			return apierrors.IsNotFound(err)
+		}, 30*time.Minute, 1*time.Minute).Should(BeTrue())
+		return nil
 	}
+}
+
+// GetClusterDeployment returns a ClusterDeployment resource.
+func (kc *KubeClient) GetClusterDeployment(ctx context.Context, clusterDeploymentName string) (*unstructured.Unstructured, error) {
+	gvr := v1alpha1.GroupVersion.WithResource("clusterdeployments")
+	client := kc.GetDynamicClient(gvr, true)
+
+	cluster, err := client.Get(ctx, clusterDeploymentName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get %s %s: %w", gvr.Resource, clusterDeploymentName, err)
+	}
+
+	return cluster, nil
 }
 
 // GetCluster returns a Cluster resource by name.

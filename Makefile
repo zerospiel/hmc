@@ -330,6 +330,15 @@ dev-push: docker-build helm-push
 dev-templates: templates-generate
 	$(KUBECTL) -n $(NAMESPACE) apply --force -f $(PROVIDER_TEMPLATES_DIR)/kcm-templates/files/templates
 
+CATALOG_CORE_REPO ?= oci://ghcr.io/k0rdent/catalog/charts
+CATALOG_CORE_CHART_NAME ?= catalog-core
+CATALOG_CORE_NAME ?= catalog-core
+CATALOG_CORE_VERSION ?= 1.0.0
+
+.PHONY: catalog-core
+catalog-core:
+	$(HELM) upgrade --install $(CATALOG_CORE_NAME) $(CATALOG_CORE_REPO)/$(CATALOG_CORE_CHART_NAME) --version $(CATALOG_CORE_VERSION) -n $(NAMESPACE)
+
 .PHONY: dev-release
 dev-release:
 	@$(YQ) e ".spec.version = \"${VERSION}\"" $(PROVIDER_TEMPLATES_DIR)/kcm-templates/files/release.yaml | $(KUBECTL) -n $(NAMESPACE) apply -f -
@@ -364,7 +373,7 @@ dev-openstack-creds: envsubst
 dev-apply: kind-deploy registry-deploy dev-push dev-deploy dev-templates dev-release ## Apply the development environment by deploying the kind cluster, local registry and the KCM helm chart.
 
 .PHONY: test-apply
-test-apply: set-kcm-version helm-package dev-deploy dev-templates dev-release
+test-apply: set-kcm-version helm-package dev-deploy dev-templates dev-release catalog-core
 
 .PHONY: dev-destroy
 dev-destroy: kind-undeploy registry-undeploy ## Destroy the development environment by deleting the kind cluster and local registry.
@@ -384,7 +393,7 @@ dev-creds-apply: dev-$(DEV_PROVIDER)-creds ## Create credentials resources for $
 dev-aws-nuke: envsubst awscli yq cloud-nuke ## Warning: Destructive! Nuke all AWS resources deployed by 'DEV_PROVIDER=aws dev-mcluster-apply'
 	@CLUSTER_NAME=$(CLUSTER_NAME) YQ=$(YQ) AWSCLI=$(AWSCLI) $(SHELL) $(CURDIR)/scripts/aws-nuke-ccm.sh elb
 	@CLUSTER_NAME=$(CLUSTER_NAME) $(ENVSUBST) < config/dev/aws-cloud-nuke.yaml.tpl > config/dev/aws-cloud-nuke.yaml
-	DISABLE_TELEMETRY=true $(CLOUDNUKE) aws --region $$AWS_REGION --force --config config/dev/aws-cloud-nuke.yaml --resource-type vpc,eip,nat-gateway,ec2,ec2-subnet,elb,elbv2,ebs,internet-gateway,network-interface,security-group
+	DISABLE_TELEMETRY=true $(CLOUDNUKE) aws --region $$AWS_REGION --force --config config/dev/aws-cloud-nuke.yaml --resource-type vpc,eip,nat-gateway,ec2,ec2-subnet,elb,elbv2,ebs,internet-gateway,network-interface,security-group,ekscluster
 	@rm config/dev/aws-cloud-nuke.yaml
 	@CLUSTER_NAME=$(CLUSTER_NAME) YQ=$(YQ) AWSCLI=$(AWSCLI) $(SHELL) $(CURDIR)/scripts/aws-nuke-ccm.sh ebs
 
