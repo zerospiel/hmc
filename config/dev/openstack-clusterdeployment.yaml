@@ -4,10 +4,11 @@ metadata:
   name: openstack-${CLUSTER_NAME_SUFFIX}
   namespace: ${NAMESPACE}
 spec:
-  template: openstack-standalone-cp-0-1-5
+  template: openstack-standalone-cp-0-1-6
   credential: openstack-cluster-identity-cred
   config:
     clusterLabels: {}
+    clusterAnnotations: {}
     controlPlaneNumber: 1
     workersNumber: 1
     controlPlane:

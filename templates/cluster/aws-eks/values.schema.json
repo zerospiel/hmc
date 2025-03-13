@@ -53,6 +53,14 @@
                 "boolean"
             ]
         },
+        "clusterAnnotations": {
+            "additionalProperties": true,
+            "description": "Annotations to apply to the cluster",
+            "properties": {},
+            "type": [
+                "object"
+            ]
+        },
         "clusterIdentity": {
             "description": "AWS Cluster Identity object reference",
             "properties": {
