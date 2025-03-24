@@ -40,6 +40,7 @@ import (
 
 	kcm "github.com/K0rdent/kcm/api/v1alpha1"
 	"github.com/K0rdent/kcm/internal/helm"
+	"github.com/K0rdent/kcm/internal/metrics"
 	"github.com/K0rdent/kcm/internal/utils"
 	"github.com/K0rdent/kcm/internal/utils/ratelimit"
 )
@@ -355,6 +356,9 @@ func (r *TemplateReconciler) updateStatus(ctx context.Context, template template
 	if err != nil {
 		return fmt.Errorf("failed to update status for template %s/%s: %w", template.GetNamespace(), template.GetName(), err)
 	}
+
+	metrics.TrackMetricTemplateInvalidity(ctx, template.GetObjectKind().GroupVersionKind().Kind, template.GetNamespace(), template.GetName(), status.Valid)
+
 	return nil
 }
 
