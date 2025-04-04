@@ -291,8 +291,9 @@ func (r *ManagementReconciler) startDependentControllers(ctx context.Context, ma
 
 	l.Info("Provider has been successfully installed, so setting up controller for ClusterDeployment")
 	if err = (&ClusterDeploymentReconciler{
-		DynamicClient:   r.DynamicClient,
-		SystemNamespace: currentNamespace,
+		DynamicClient:        r.DynamicClient,
+		SystemNamespace:      currentNamespace,
+		IsDisabledValidation: r.IsDisabledValidation,
 	}).SetupWithManager(r.Manager); err != nil {
 		return false, fmt.Errorf("failed to setup controller for ClusterDeployment: %w", err)
 	}
@@ -300,7 +301,8 @@ func (r *ManagementReconciler) startDependentControllers(ctx context.Context, ma
 
 	l.Info("Provider has been successfully installed, so setting up controller for MultiClusterService")
 	if err = (&MultiClusterServiceReconciler{
-		SystemNamespace: currentNamespace,
+		SystemNamespace:      currentNamespace,
+		IsDisabledValidation: r.IsDisabledValidation,
 	}).SetupWithManager(r.Manager); err != nil {
 		return false, fmt.Errorf("failed to setup controller for MultiClusterService: %w", err)
 	}

@@ -50,6 +50,8 @@ import (
 type MultiClusterServiceReconciler struct {
 	Client          client.Client
 	SystemNamespace string
+	// TODO: set; add watcher (the same as in the cld)
+	IsDisabledValidation bool // is webhook disabled set via the controller flags
 }
 
 // Reconcile reconciles a MultiClusterService object.
@@ -471,7 +473,7 @@ func requeueSveltosProfileForClusterSummary(ctx context.Context, obj client.Obje
 func (r *MultiClusterServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Client = mgr.GetClient()
 
-	return ctrl.NewControllerManagedBy(mgr).
+	managedController := ctrl.NewControllerManagedBy(mgr).
 		WithOptions(controller.TypedOptions[ctrl.Request]{
 			RateLimiter: ratelimit.DefaultFastSlow(),
 		}).
@@ -482,6 +484,12 @@ func (r *MultiClusterServiceReconciler) SetupWithManager(mgr ctrl.Manager) error
 				DeleteFunc:  func(event.DeleteEvent) bool { return false },
 				GenericFunc: func(event.GenericEvent) bool { return false },
 			}),
-		).
-		Complete(r)
+		)
+
+	if r.IsDisabledValidation {
+		managedController.WatchesRawSource(templatesValidUpdateSource(mgr.GetClient(), mgr.GetCache(), &kcm.ServiceTemplate{}))
+		mgr.GetLogger().WithName("multiclusterservice_ctrl_setup").Info("Validations are disabled, watcher for ServiceTemplate objects is set")
+	}
+
+	return managedController.Complete(r)
 }

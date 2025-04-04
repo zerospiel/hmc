@@ -40,12 +40,14 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
+	crcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	kcm "github.com/K0rdent/kcm/api/v1alpha1"
 	"github.com/K0rdent/kcm/internal/helm"
@@ -76,6 +78,9 @@ type ClusterDeploymentReconciler struct {
 	SystemNamespace string
 
 	defaultRequeueTime time.Duration
+
+	// TODO: set; add watcher
+	IsDisabledValidation bool // is webhook disabled set via the controller flags
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -241,18 +246,18 @@ func (r *ClusterDeploymentReconciler) updateCluster(ctx context.Context, cd *kcm
 		Message: "Template is valid",
 	})
 
-	source, err := r.getSource(ctx, clusterTpl.Status.ChartRef)
+	helmChartArtifact, err := r.getSourceArtifact(ctx, clusterTpl.Status.ChartRef)
 	if err != nil {
 		apimeta.SetStatusCondition(cd.GetConditions(), metav1.Condition{
 			Type:    kcm.HelmChartReadyCondition,
 			Status:  metav1.ConditionFalse,
 			Reason:  kcm.FailedReason,
-			Message: fmt.Sprintf("failed to get helm chart source: %s", err),
+			Message: fmt.Sprintf("failed to get helm chart artifact: %s", err),
 		})
 		return ctrl.Result{}, err
 	}
 	l.Info("Downloading Helm chart")
-	hcChart, err := r.DownloadChartFromArtifact(ctx, source.GetArtifact())
+	hcChart, err := r.DownloadChartFromArtifact(ctx, helmChartArtifact)
 	if err != nil {
 		apimeta.SetStatusCondition(cd.GetConditions(), metav1.Condition{
 			Type:    kcm.HelmChartReadyCondition,
@@ -664,16 +669,18 @@ func (r *ClusterDeploymentReconciler) updateStatus(ctx context.Context, cd *kcm.
 	return nil
 }
 
-func (r *ClusterDeploymentReconciler) getSource(ctx context.Context, ref *hcv2.CrossNamespaceSourceReference) (sourcev1.Source, error) {
+func (r *ClusterDeploymentReconciler) getSourceArtifact(ctx context.Context, ref *hcv2.CrossNamespaceSourceReference) (*sourcev1.Artifact, error) {
 	if ref == nil {
 		return nil, errors.New("helm chart source is not provided")
 	}
-	chartRef := client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}
-	hc := sourcev1.HelmChart{}
-	if err := r.Client.Get(ctx, chartRef, &hc); err != nil {
-		return nil, err
+
+	key := client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}
+	hc := new(sourcev1.HelmChart)
+	if err := r.Client.Get(ctx, key, hc); err != nil {
+		return nil, fmt.Errorf("failed to get HelmChart %s: %w", key, err)
 	}
-	return &hc, nil
+
+	return hc.GetArtifact(), nil
 }
 
 func (r *ClusterDeploymentReconciler) Delete(ctx context.Context, cd *kcm.ClusterDeployment) (result ctrl.Result, err error) {
@@ -874,6 +881,64 @@ func (r *ClusterDeploymentReconciler) setAvailableUpgrades(ctx context.Context, 
 	return nil
 }
 
+// templatesValidUpdateSource is a source of exclusively update events which enqueues ClusterDeployment objects if the referenced ServiceTemplate or ClusterTemplate object gets the valid status.
+func templatesValidUpdateSource(cl client.Client, cache crcache.Cache, obj client.Object) source.TypedSource[ctrl.Request] {
+	var isServiceTemplateKind bool // quick kludge to avoid complicated switches
+	var indexKey string
+
+	switch obj.(type) {
+	case *kcm.ServiceTemplate:
+		isServiceTemplateKind = true
+		indexKey = kcm.ClusterDeploymentServiceTemplatesIndexKey
+	case *kcm.ClusterTemplate:
+		indexKey = kcm.ClusterDeploymentTemplateIndexKey
+	default:
+		panic(fmt.Sprintf("unexpected type %T, expected one of [%T, %T]", obj, new(kcm.ServiceTemplate), new(kcm.ClusterTemplate)))
+	}
+
+	return source.TypedKind(cache, obj, handler.TypedEnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []ctrl.Request {
+		clds := new(kcm.ClusterDeploymentList)
+		if err := cl.List(ctx, clds, client.InNamespace(o.GetNamespace()), client.MatchingFields{indexKey: o.GetName()}); err != nil {
+			return nil
+		}
+
+		resp := make([]ctrl.Request, 0, len(clds.Items))
+		for _, v := range clds.Items {
+			resp = append(resp, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&v)})
+		}
+
+		return resp
+	}), predicate.TypedFuncs[client.Object]{
+		GenericFunc: func(event.TypedGenericEvent[client.Object]) bool { return false },
+		CreateFunc:  func(event.TypedCreateEvent[client.Object]) bool { return false },
+		DeleteFunc:  func(event.TypedDeleteEvent[client.Object]) bool { return false },
+		UpdateFunc: func(tue event.TypedUpdateEvent[client.Object]) bool {
+			// NOTE: might be optimized, probably with go's core types gone (>=go1.25)
+			if isServiceTemplateKind {
+				sto, ok := tue.ObjectOld.(*kcm.ServiceTemplate)
+				if !ok {
+					return false
+				}
+				stn, ok := tue.ObjectNew.(*kcm.ServiceTemplate)
+				if !ok {
+					return false
+				}
+				return stn.Status.Valid && !sto.Status.Valid
+			}
+
+			cto, ok := tue.ObjectOld.(*kcm.ClusterTemplate)
+			if !ok {
+				return false
+			}
+			ctn, ok := tue.ObjectNew.(*kcm.ClusterTemplate)
+			if !ok {
+				return false
+			}
+			return ctn.Status.Valid && !cto.Status.Valid
+		},
+	})
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *ClusterDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Client = mgr.GetClient()
@@ -883,7 +948,7 @@ func (r *ClusterDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	r.defaultRequeueTime = 10 * time.Second
 
-	return ctrl.NewControllerManagedBy(mgr).
+	managedController := ctrl.NewControllerManagedBy(mgr).
 		WithOptions(controller.TypedOptions[ctrl.Request]{
 			RateLimiter: ratelimit.DefaultFastSlow(),
 		}).
@@ -959,6 +1024,13 @@ func (r *ClusterDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 				return req
 			}),
-		).
-		Complete(r)
+		)
+
+	if r.IsDisabledValidation {
+		managedController.WatchesRawSource(templatesValidUpdateSource(mgr.GetClient(), mgr.GetCache(), &kcm.ServiceTemplate{}))
+		managedController.WatchesRawSource(templatesValidUpdateSource(mgr.GetClient(), mgr.GetCache(), &kcm.ClusterTemplate{}))
+		mgr.GetLogger().WithName("clusterdeployment_ctrl_setup").Info("Validations are disabled, extra watchers are set")
+	}
+
+	return managedController.Complete(r)
 }
