@@ -88,19 +88,29 @@ jobs:
                 --template-file "${PATH_TO_JINJA_TEMPLATE_FILE}"
           done
           JOB_URL=$(gh run --repo ${{ github.repository }} view ${{ github.run_id }} --json jobs --jq '.jobs[] | select(.name == "${{ github.job }}") | .url, (.steps[] | select(.name == "Run ai-codereview script") | "#step:\(.number):1")' | tr -d "\n")
-          echo "See the code review [here]($JOB_URL)"  >> ./summary.txt
-          echo "review_result=$(cat ./summary.txt | tr '\n' ' ')" >> $GITHUB_OUTPUT
+          echo "review_result=There is some code review from AI. See the results [here]($JOB_URL)" >> $GITHUB_OUTPUT
       - name: Saved cached virtualenv
         uses: actions/cache/save@d4323d4df104b026a6aa633fdb11d772146be0bf #v4
         with:
           key: venv-${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-${{ hashFiles('ai-ci-scripts/ai-codereview/requirements.txt') }}
           path: .venv    
-      - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea #v7
+      - name: Find Comment
+        uses: peter-evans/find-comment@3eae4d37986fb5a8592848f6a574fdf654e61f9e #v3
+        id: fc
         with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: "${{ steps.codereview.outputs.review_result }}"
-            })
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: See the code review
+      - name: Create comment
+        if: steps.fc.outputs.comment-id == ''
+        uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866368bd1eff043 #v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: "${{ steps.codereview.outputs.review_result }}"
+      - name: Update comment
+        if: steps.fc.outputs.comment-id != ''
+        uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866368bd1eff043 #v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          body: "${{ steps.codereview.outputs.review_result }}"
+          edit-mode: replace
