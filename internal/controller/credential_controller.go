@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
 	kcm "github.com/K0rdent/kcm/api/v1alpha1"
+	"github.com/K0rdent/kcm/internal/record"
 	"github.com/K0rdent/kcm/internal/utils"
 	"github.com/K0rdent/kcm/internal/utils/ratelimit"
 )
@@ -85,6 +86,7 @@ func (r *CredentialReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			errMsg = fmt.Sprintf("ClusterIdentity object of Kind=%s %s/%s not found",
 				cred.Spec.IdentityRef.Kind, cred.Spec.IdentityRef.Namespace, cred.Spec.IdentityRef.Name)
 		}
+		record.Warn(cred, cred.Generation, "MissingClusterIdentity", errMsg)
 
 		apimeta.SetStatusCondition(cred.GetConditions(), metav1.Condition{
 			Type:    kcm.CredentialReadyCondition,
