@@ -33,6 +33,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -100,6 +101,55 @@ func (r *ManagementReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return r.update(ctx, management)
 }
 
+func (r *ManagementReconciler) getRequestedProvidersList(ctx context.Context, management *kcm.Management) ([]kcm.Provider, error) {
+	list := slices.Clone(management.Spec.Providers)
+
+	existingProviders := make(map[string]struct{}, len(list))
+	for _, provider := range list {
+		existingProviders[provider.Name] = struct{}{}
+	}
+
+	var objList kcm.PluggableProviderList
+
+	if err := r.Client.List(ctx, &objList, client.MatchingLabels{kcm.GenericComponentNameLabel: kcm.GenericComponentLabelValueKCM}); err != nil {
+		return nil, err
+	}
+
+	for _, el := range objList.Items {
+		if _, exists := existingProviders[el.Name]; !exists {
+			list = append(list,
+				kcm.Provider{
+					Name:      el.Name,
+					Component: el.Spec.Component,
+				},
+			)
+
+			existingProviders[el.Name] = struct{}{}
+		}
+	}
+
+	slices.SortFunc(list, func(a, b kcm.Provider) int {
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+
+	return list, nil
+}
+
+func (r *ManagementReconciler) ensureRequestedProvidersList(ctx context.Context, management *kcm.Management) error {
+	rprov, err := r.getRequestedProvidersList(ctx, management)
+	if err != nil {
+		return err
+	}
+
+	if equality.Semantic.DeepEqual(rprov, management.Status.RequestedProviders) {
+		return nil
+	}
+
+	management.Status.RequestedProviders = rprov
+
+	return r.updateStatus(ctx, management)
+}
+
 func (r *ManagementReconciler) update(ctx context.Context, management *kcm.Management) (ctrl.Result, error) {
 	l := ctrl.LoggerFrom(ctx)
 
@@ -130,6 +180,12 @@ func (r *ManagementReconciler) update(ctx context.Context, management *kcm.Manag
 		if !valid {
 			return ctrl.Result{}, err
 		}
+	}
+
+	err = r.ensureRequestedProvidersList(ctx, management)
+	if err != nil {
+		l.Error(err, "failed to ensure RequestedProviders list")
+		return ctrl.Result{}, err
 	}
 
 	if err := r.cleanupRemovedComponents(ctx, management); err != nil {
@@ -175,6 +231,9 @@ func (r *ManagementReconciler) update(ctx context.Context, management *kcm.Manag
 
 	r.setReadyCondition(management)
 
+	// (s3rj1k): status updates are called in multiple places
+	// During the `update` method lifecycle this should be revisited
+	// and optimized to reduce the number of calls
 	errs = errors.Join(errs, r.updateStatus(ctx, management))
 	if errs != nil {
 		l.Error(errs, "Multiple errors during Management reconciliation")
@@ -421,7 +480,7 @@ func (r *ManagementReconciler) cleanupRemovedComponents(ctx context.Context, man
 			slices.ContainsFunc(releasesList.Items, func(r metav1.PartialObjectMetadata) bool {
 				return componentName == utils.TemplatesChartFromReleaseName(r.Name)
 			}) ||
-			slices.ContainsFunc(management.Spec.Providers, func(newComp kcm.Provider) bool { return componentName == newComp.Name }) {
+			slices.ContainsFunc(management.Status.RequestedProviders, func(newComp kcm.Provider) bool { return componentName == newComp.Name }) {
 			continue
 		}
 
@@ -760,7 +819,7 @@ func applyKCMDefaults(config *apiextensionsv1.JSON) (*apiextensionsv1.JSON, erro
 }
 
 func getWrappedComponents(mgmt *kcm.Management, release *kcm.Release) ([]component, error) {
-	components := make([]component, 0, len(mgmt.Spec.Providers)+2)
+	components := make([]component, 0, len(mgmt.Status.RequestedProviders)+2)
 
 	kcmComponent := kcm.Component{}
 	capiComponent := kcm.Component{}
@@ -799,7 +858,7 @@ func getWrappedComponents(mgmt *kcm.Management, release *kcm.Release) ([]compone
 
 	const sveltosTargetNamespace = "projectsveltos"
 
-	for _, p := range mgmt.Spec.Providers {
+	for _, p := range mgmt.Status.RequestedProviders {
 		c := component{
 			Component: p.Component, helmReleaseName: p.Name,
 			dependsOn: []fluxmeta.NamespacedObjectReference{{Name: kcm.CoreCAPIName}}, isCAPIProvider: true,
@@ -1086,7 +1145,23 @@ func (r *ManagementReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		WithOptions(controller.TypedOptions[ctrl.Request]{
 			RateLimiter: ratelimit.DefaultFastSlow(),
 		}).
-		For(&kcm.Management{})
+		For(&kcm.Management{}).
+		Watches(&kcm.PluggableProvider{}, handler.EnqueueRequestsFromMapFunc(func(context.Context, client.Object) []ctrl.Request {
+			return []ctrl.Request{{NamespacedName: client.ObjectKey{Name: kcm.ManagementName}}}
+		}), builder.WithPredicates(predicate.Funcs{
+			CreateFunc: func(e event.CreateEvent) bool {
+				return utils.HasLabel(e.Object, kcm.GenericComponentNameLabel)
+			},
+			DeleteFunc: func(event.DeleteEvent) bool {
+				return true
+			},
+			UpdateFunc: func(e event.UpdateEvent) bool {
+				return utils.HasLabel(e.ObjectNew, kcm.GenericComponentNameLabel)
+			},
+			GenericFunc: func(event.GenericEvent) bool {
+				return false
+			},
+		}))
 
 	if r.IsDisabledValidationWH {
 		setupLog := mgr.GetLogger().WithName("management_ctrl_setup")

@@ -1,0 +1,9 @@
+---
+apiVersion: k0rdent.mirantis.com/v1alpha1
+kind: PluggableProvider
+metadata:
+  name: projectsveltos
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  description: "Project Sveltos provider"
