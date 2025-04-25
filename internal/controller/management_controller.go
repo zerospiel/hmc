@@ -106,11 +106,6 @@ func (r *ManagementReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 func (r *ManagementReconciler) getRequestedProvidersList(ctx context.Context, management *kcm.Management) ([]kcm.Provider, error) {
 	list := slices.Clone(management.Spec.Providers)
 
-	existingProviders := make(map[string]struct{}, len(list))
-	for _, provider := range list {
-		existingProviders[provider.Name] = struct{}{}
-	}
-
 	var objList kcm.PluggableProviderList
 
 	if err := r.Client.List(ctx, &objList, client.MatchingLabels{kcm.GenericComponentNameLabel: kcm.GenericComponentLabelValueKCM}); err != nil {
@@ -118,15 +113,13 @@ func (r *ManagementReconciler) getRequestedProvidersList(ctx context.Context, ma
 	}
 
 	for _, el := range objList.Items {
-		if _, exists := existingProviders[el.Name]; !exists {
+		if !slices.ContainsFunc(list, func(e kcm.Provider) bool { return e.Name == el.Name }) {
 			list = append(list,
 				kcm.Provider{
 					Name:      el.Name,
 					Component: el.Spec.Component,
 				},
 			)
-
-			existingProviders[el.Name] = struct{}{}
 		}
 	}
 
@@ -137,7 +130,7 @@ func (r *ManagementReconciler) getRequestedProvidersList(ctx context.Context, ma
 	return list, nil
 }
 
-func (r *ManagementReconciler) ensureRequestedProvidersList(ctx context.Context, management *kcm.Management) error {
+func (r *ManagementReconciler) setRequestedProvidersList(ctx context.Context, management *kcm.Management) error {
 	rprov, err := r.getRequestedProvidersList(ctx, management)
 	if err != nil {
 		return err
@@ -149,7 +142,7 @@ func (r *ManagementReconciler) ensureRequestedProvidersList(ctx context.Context,
 
 	management.Status.RequestedProviders = rprov
 
-	return r.updateStatus(ctx, management)
+	return nil
 }
 
 func (r *ManagementReconciler) update(ctx context.Context, management *kcm.Management) (ctrl.Result, error) {
@@ -177,17 +170,23 @@ func (r *ManagementReconciler) update(ctx context.Context, management *kcm.Manag
 		return ctrl.Result{}, err
 	}
 
+	/*
+		Sets management.Status.RequestedProviders without updating actual status.
+		The full status update occurs at reconcile function's end.
+		For IsDisabledValidationWH case, setting this field must happen before
+		calling validateManagement, as that method requires this field to be populated.
+	*/
+	err = r.setRequestedProvidersList(ctx, management)
+	if err != nil {
+		l.Error(err, "failed to ensure RequestedProviders list")
+		return ctrl.Result{}, err
+	}
+
 	if r.IsDisabledValidationWH {
 		valid, err := r.validateManagement(ctx, management, release)
 		if !valid {
 			return ctrl.Result{}, err
 		}
-	}
-
-	err = r.ensureRequestedProvidersList(ctx, management)
-	if err != nil {
-		l.Error(err, "failed to ensure RequestedProviders list")
-		return ctrl.Result{}, err
 	}
 
 	if err := r.cleanupRemovedComponents(ctx, management); err != nil {
@@ -233,9 +232,6 @@ func (r *ManagementReconciler) update(ctx context.Context, management *kcm.Manag
 
 	r.setReadyCondition(management)
 
-	// (s3rj1k): status updates are called in multiple places
-	// During the `update` method lifecycle this should be revisited
-	// and optimized to reduce the number of calls
 	errs = errors.Join(errs, r.updateStatus(ctx, management))
 	if errs != nil {
 		l.Error(errs, "Multiple errors during Management reconciliation")
