@@ -1,15 +1,14 @@
----
 apiVersion: k0rdent.mirantis.com/v1alpha1
-kind: PluggableProvider
+kind: ProviderInterface
 metadata:
-  name: cluster-api-provider-vsphere
+  name: cluster-api-provider-openstack
   annotations:
     helm.sh/resource-policy: keep
 spec:
   clusterGVKs:
     - group: infrastructure.cluster.x-k8s.io
       version: v1beta1
-      kind: VSphereCluster
+      kind: OpenStackCluster
   clusterIdentityKinds:
-    - VSphereClusterIdentity
-  description: "vSphere infrastructure provider for Cluster API"
+    - Secret
+  description: "OpenStack infrastructure provider for Cluster API"

@@ -33,7 +33,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -103,48 +102,6 @@ func (r *ManagementReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return r.update(ctx, management)
 }
 
-func (r *ManagementReconciler) getRequestedProvidersList(ctx context.Context, management *kcm.Management) ([]kcm.Provider, error) {
-	list := slices.Clone(management.Spec.Providers)
-
-	var objList kcm.PluggableProviderList
-
-	if err := r.Client.List(ctx, &objList, client.MatchingLabels{kcm.GenericComponentNameLabel: kcm.GenericComponentLabelValueKCM}); err != nil {
-		return nil, err
-	}
-
-	for _, el := range objList.Items {
-		if !slices.ContainsFunc(list, func(e kcm.Provider) bool { return e.Name == el.Name }) {
-			list = append(list,
-				kcm.Provider{
-					Name:      el.Name,
-					Component: el.Spec.Component,
-				},
-			)
-		}
-	}
-
-	slices.SortFunc(list, func(a, b kcm.Provider) int {
-		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
-	})
-
-	return list, nil
-}
-
-func (r *ManagementReconciler) setRequestedProvidersList(ctx context.Context, management *kcm.Management) error {
-	rprov, err := r.getRequestedProvidersList(ctx, management)
-	if err != nil {
-		return err
-	}
-
-	if equality.Semantic.DeepEqual(rprov, management.Status.RequestedProviders) {
-		return nil
-	}
-
-	management.Status.RequestedProviders = rprov
-
-	return nil
-}
-
 func (r *ManagementReconciler) update(ctx context.Context, management *kcm.Management) (ctrl.Result, error) {
 	l := ctrl.LoggerFrom(ctx)
 
@@ -167,18 +124,6 @@ func (r *ManagementReconciler) update(ctx context.Context, management *kcm.Manag
 	if err != nil && !r.IsDisabledValidationWH {
 		r.warnf(management, "ReleaseGetFailed", "failed to get release: %v", err)
 		l.Error(err, "failed to get Release")
-		return ctrl.Result{}, err
-	}
-
-	/*
-		Sets management.Status.RequestedProviders without updating actual status.
-		The full status update occurs at reconcile function's end.
-		For IsDisabledValidationWH case, setting this field must happen before
-		calling validateManagement, as that method requires this field to be populated.
-	*/
-	err = r.setRequestedProvidersList(ctx, management)
-	if err != nil {
-		l.Error(err, "failed to ensure RequestedProviders list")
 		return ctrl.Result{}, err
 	}
 
@@ -290,7 +235,7 @@ func (r *ManagementReconciler) reconcileManagementComponents(ctx context.Context
 
 		if !template.Status.Valid {
 			errMsg := fmt.Sprintf("Template %s is not marked as valid", component.Template)
-			updateComponentsStatus(statusAccumulator, component, nil, errMsg)
+			updateComponentsStatus(statusAccumulator, component, template, errMsg)
 			errs = errors.Join(errs, errors.New(errMsg))
 
 			continue
@@ -311,7 +256,7 @@ func (r *ManagementReconciler) reconcileManagementComponents(ctx context.Context
 		if err != nil {
 			errMsg := fmt.Sprintf("Failed to reconcile HelmRelease %s/%s: %v", r.SystemNamespace, component.helmReleaseName, err)
 			r.warnf(management, "HelmReleaseReconcileFailed", errMsg)
-			updateComponentsStatus(statusAccumulator, component, nil, errMsg)
+			updateComponentsStatus(statusAccumulator, component, template, errMsg)
 			errs = errors.Join(errs, errors.New(errMsg))
 
 			continue
@@ -326,7 +271,7 @@ func (r *ManagementReconciler) reconcileManagementComponents(ctx context.Context
 		if err := r.checkProviderStatus(ctx, component); err != nil {
 			l.Info("Provider is not yet ready", "template", component.Template, "err", err)
 			requeue = true
-			updateComponentsStatus(statusAccumulator, component, nil, err.Error())
+			updateComponentsStatus(statusAccumulator, component, template, err.Error())
 			continue
 		}
 
@@ -480,7 +425,7 @@ func (r *ManagementReconciler) cleanupRemovedComponents(ctx context.Context, man
 			slices.ContainsFunc(releasesList.Items, func(r metav1.PartialObjectMetadata) bool {
 				return componentName == utils.TemplatesChartFromReleaseName(r.Name)
 			}) ||
-			slices.ContainsFunc(management.Status.RequestedProviders, func(newComp kcm.Provider) bool { return componentName == newComp.Name }) {
+			slices.ContainsFunc(management.Spec.Providers, func(newComp kcm.Provider) bool { return componentName == newComp.Name }) {
 			continue
 		}
 
@@ -884,7 +829,7 @@ func (r *ManagementReconciler) getWrappedComponents(mgmt *kcm.Management, releas
 
 	const sveltosTargetNamespace = "projectsveltos"
 
-	for _, p := range mgmt.Status.RequestedProviders {
+	for _, p := range mgmt.Spec.Providers {
 		c := component{
 			Component: p.Component, helmReleaseName: p.Name,
 			dependsOn: []fluxmeta.NamespacedObjectReference{{Name: kcm.CoreCAPIName}}, isCAPIProvider: true,
@@ -1113,21 +1058,24 @@ func updateComponentsStatus(
 		return
 	}
 
-	stAcc.components[comp.helmReleaseName] = kcm.ComponentStatus{
+	componentStatus := kcm.ComponentStatus{
 		Error:    err,
 		Success:  err == "",
 		Template: comp.Template,
 	}
 
-	if err == "" && template != nil {
-		stAcc.providers = append(stAcc.providers, template.Status.Providers...)
-		slices.Sort(stAcc.providers)
-		stAcc.providers = slices.Compact(stAcc.providers)
-
-		for _, v := range template.Status.Providers {
-			stAcc.compatibilityContracts[v] = template.Status.CAPIContracts
+	if template != nil {
+		componentStatus.ExposedProviders = template.Status.Providers
+		if err == "" {
+			stAcc.providers = append(stAcc.providers, template.Status.Providers...)
+			slices.Sort(stAcc.providers)
+			stAcc.providers = slices.Compact(stAcc.providers)
+			for _, v := range template.Status.Providers {
+				stAcc.compatibilityContracts[v] = template.Status.CAPIContracts
+			}
 		}
 	}
+	stAcc.components[comp.helmReleaseName] = componentStatus
 }
 
 // setReadyCondition updates the Management resource's "Ready" condition based on whether
@@ -1181,23 +1129,7 @@ func (r *ManagementReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		WithOptions(controller.TypedOptions[ctrl.Request]{
 			RateLimiter: ratelimit.DefaultFastSlow(),
 		}).
-		For(&kcm.Management{}).
-		Watches(&kcm.PluggableProvider{}, handler.EnqueueRequestsFromMapFunc(func(context.Context, client.Object) []ctrl.Request {
-			return []ctrl.Request{{NamespacedName: client.ObjectKey{Name: kcm.ManagementName}}}
-		}), builder.WithPredicates(predicate.Funcs{
-			CreateFunc: func(e event.CreateEvent) bool {
-				return utils.HasLabel(e.Object, kcm.GenericComponentNameLabel)
-			},
-			DeleteFunc: func(event.DeleteEvent) bool {
-				return true
-			},
-			UpdateFunc: func(e event.UpdateEvent) bool {
-				return utils.HasLabel(e.ObjectNew, kcm.GenericComponentNameLabel)
-			},
-			GenericFunc: func(event.GenericEvent) bool {
-				return false
-			},
-		}))
+		For(&kcm.Management{})
 
 	if r.IsDisabledValidationWH {
 		setupLog := mgr.GetLogger().WithName("management_ctrl_setup")

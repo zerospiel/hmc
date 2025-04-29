@@ -138,8 +138,6 @@ type ManagementStatus struct {
 	// Release indicates the current Release object.
 	Release string `json:"release,omitempty"`
 
-	// RequestedProviders holds all requested CAPI providers.
-	RequestedProviders []Provider `json:"requestedProviders,omitempty"`
 	// AvailableProviders holds all available CAPI providers.
 	AvailableProviders Providers `json:"availableProviders,omitempty"`
 
@@ -155,6 +153,8 @@ type ComponentStatus struct {
 	Error string `json:"error,omitempty"`
 	// Success represents if a component installation was successful
 	Success bool `json:"success,omitempty"`
+	// ExposedProviders is a list of CAPI providers this component exposes
+	ExposedProviders Providers `json:"exposedProviders,omitempty"`
 }
 
 // +kubebuilder:object:root=true
