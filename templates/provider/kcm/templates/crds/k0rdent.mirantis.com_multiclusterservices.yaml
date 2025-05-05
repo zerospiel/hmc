@@ -253,6 +253,11 @@ spec:
                           maxLength: 253
                           minLength: 1
                           type: string
+                        templateChain:
+                          description: |-
+                            TemplateChain defines the ServiceTemplateChain object that will be used to deploy the service
+                            along with desired ServiceTemplate version.
+                          type: string
                         values:
                           description: |-
                             Values is the helm values to be passed to the chart used by the template.
@@ -522,6 +527,43 @@ spec:
                       type: array
                   required:
                   - clusterName
+                  type: object
+                type: array
+              servicesUpgradePaths:
+                description: ServicesUpgradePaths contains details for the state of
+                  services upgrade paths.
+                items:
+                  description: ServiceUpgradePaths contains details for the state
+                    of service upgrade paths.
+                  properties:
+                    availableUpgrades:
+                      description: AvailableUpgrades contains details for the state
+                        of available upgrades.
+                      items:
+                        description: UpgradePath contains details for the state of
+                          service upgrade paths.
+                        properties:
+                          upgradePaths:
+                            description: Versions contains the list of versions that
+                              service can be upgraded to.
+                            items:
+                              type: string
+                            type: array
+                        type: object
+                      type: array
+                    name:
+                      description: Name is the name of the service.
+                      type: string
+                    namespace:
+                      description: Namespace is the namespace of the service.
+                      type: string
+                    template:
+                      description: Template is the name of the current service template.
+                      type: string
+                  required:
+                  - name
+                  - namespace
+                  - template
                   type: object
                 type: array
             type: object
