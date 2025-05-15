@@ -29,7 +29,7 @@ type ClusterIPAMSpec struct {
 	// +kubebuilder:validation:XValidation:rule="oldSelf == '' || self == oldSelf",message="Claim reference is immutable once set"
 
 	// ClusterIPAMClaimRef is a reference to the [ClusterIPAMClaim] that this [ClusterIPAM] is bound to.
-	ClusterIPAMClaimRef string `json:"clusterIPAMClaimRefs,omitempty"`
+	ClusterIPAMClaimRef string `json:"clusterIPAMClaimRef,omitempty"`
 }
 
 // ClusterIPAMStatus defines the observed state of ClusterIPAM

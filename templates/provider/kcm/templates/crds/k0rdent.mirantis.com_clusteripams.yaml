@@ -48,7 +48,7 @@ spec:
           spec:
             description: ClusterIPAMSpec defines the desired state of ClusterIPAM
             properties:
-              clusterIPAMClaimRefs:
+              clusterIPAMClaimRef:
                 description: ClusterIPAMClaimRef is a reference to the [ClusterIPAMClaim]
                   that this [ClusterIPAM] is bound to.
                 type: string
