@@ -7,7 +7,7 @@ require (
 	github.com/a8m/envsubst v1.4.3
 	github.com/cert-manager/cert-manager v1.17.2
 	github.com/fluxcd/helm-controller/api v1.2.0
-	github.com/fluxcd/pkg/apis/meta v1.11.0
+	github.com/fluxcd/pkg/apis/meta v1.12.0
 	github.com/fluxcd/pkg/runtime v0.59.0
 	github.com/fluxcd/source-controller/api v1.5.0
 	github.com/google/uuid v1.6.0
@@ -22,7 +22,7 @@ require (
 	github.com/segmentio/analytics-go v3.1.0+incompatible
 	github.com/stretchr/testify v1.10.0
 	github.com/telekom/cluster-api-ipam-provider-infoblox v0.1.0-alpha.8
-	github.com/vmware-tanzu/velero v1.16.0
+	github.com/vmware-tanzu/velero v1.16.1
 	golang.org/x/crypto v0.38.0
 	golang.org/x/text v0.25.0
 	golang.org/x/time v0.11.0
