@@ -1,3 +1,4 @@
+name: Issues and PRs Stale Cron
 on:
   schedule:
     - cron: "0 10 * * *" # 10am UTC
@@ -10,7 +11,8 @@ jobs:
 
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/stale@v9
+      - name: Stale non-active and remove marked with stale label
+        uses: actions/stale@v9
         with:
           # issues
           days-before-issue-stale: 14

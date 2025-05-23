@@ -1,3 +1,4 @@
+name: Issues Triage Labels
 on:
   issues:
     types: [opened, transferred, closed, reopened, labeled, unlabeled]
