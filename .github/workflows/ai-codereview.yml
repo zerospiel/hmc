@@ -1,11 +1,7 @@
 name: AI Codereview
 on:
-  pull_request_target:
-    branches:
-      - main
-      - '*-release'
-    paths:
-      - '**.go'
+  workflow_dispatch
+
 jobs:
   ai-codereview:
     name: "AI Code Review"
