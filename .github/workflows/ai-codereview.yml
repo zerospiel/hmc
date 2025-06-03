@@ -1,11 +1,7 @@
 name: AI Codereview
 on:
-  pull_request_target:
-    branches:
-      - main
-      - '*-release'
-    paths:
-      - '**.go'
+  workflow_dispatch
+
 jobs:
   ai-codereview:
     name: "AI Code Review"
@@ -17,20 +13,7 @@ jobs:
       group: ai-codereview-${{ github.head_ref || github.run_id }}
       cancel-in-progress: true
     timeout-minutes: 10
-    outputs:
-      jobname: ${{ steps.vars.outputs.jobname }}
     steps:
-      - name: Get PR ref
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea #v7
-        id: pr
-        with:
-          script: |
-            const { data: pullRequest } = await github.rest.pulls.get({
-              ...context.repo,
-              pull_number: context.payload.pull_request.number,
-            });
-            return pullRequest.merge_commit_sha;
-
       - name: Get job name
         id: vars
         env:
@@ -42,7 +25,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4
         with:
-          ref: ${{ fromJSON(steps.pr.outputs.result) }}
           fetch-depth: 0
 
       - name: Checkout scripts
