@@ -285,6 +285,7 @@ func main() {
 		IsDisabledValidationWH: !enableWebhook,
 		GlobalRegistry:         globalRegistry,
 		GlobalK0sURL:           globalK0sURL,
+		RegistryCertSecret:     registryCertSecret,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Management")
 		os.Exit(1)
