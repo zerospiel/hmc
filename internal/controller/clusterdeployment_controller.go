@@ -836,6 +836,30 @@ func (r *ClusterDeploymentReconciler) reconcileDelete(ctx context.Context, cd *k
 		return ctrl.Result{}, err
 	}
 
+	// Verify that any service templates which have been installed are removed prior to deleting the helm release
+	// otherwise the k8s control plane will potentially be deleted prior to cleaning up resources
+	listOptions := []client.ListOption{
+		client.InNamespace(cd.Namespace),
+		client.MatchingLabels{
+			sveltosv1beta1.ClusterNameLabel: cd.Name,
+		},
+	}
+
+	clusterSummaryList := &sveltosv1beta1.ClusterSummaryList{}
+	if err := r.Client.List(ctx, clusterSummaryList, listOptions...); client.IgnoreNotFound(err) != nil {
+		return ctrl.Result{}, err
+	}
+
+	for _, cs := range clusterSummaryList.Items {
+		for _, helmReleaseSummary := range cs.Status.HelmReleaseSummaries {
+			if helmReleaseSummary.Status == sveltosv1beta1.HelmChartStatusManaging {
+				l.Info("services need to be removed prior to deletion of ClusterDeployment, retrying",
+					"ReleaseName", helmReleaseSummary.ReleaseName)
+				return ctrl.Result{RequeueAfter: r.defaultRequeueTime}, nil
+			}
+		}
+	}
+
 	if err := r.releaseProviderCluster(ctx, cd); err != nil {
 		if r.IsDisabledValidationWH && errors.Is(err, errClusterTemplateNotFound) {
 			r.setCondition(cd, kcm.DeletingCondition, err)
