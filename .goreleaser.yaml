@@ -1,0 +1,217 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+version: 2
+
+project_name: kcm
+
+before:
+  hooks:
+    - make tidy
+    - make kcm-dist-release
+    - mv ./dist/install.yaml ./
+    - rmdir ./dist/
+
+git:
+  # Default: '-version:refname'
+  tag_sort: -version:creatordate
+  prerelease_suffix: "-"
+
+metadata:
+  mod_timestamp: "{{ .CommitTimestamp }}"
+
+report_sizes: true
+
+gomod:
+  proxy: false # TODO
+  env:
+    - GOPROXY=https://proxy.golang.org,direct
+    - GOSUMDB=sum.golang.org
+  mod: mod
+
+builds:
+  # TODO: split into release and generic build to skip building binaries+images for arm/arm64 when is not needed
+  - id: default
+    env:
+      - CGO_ENABLED=0
+      - GO111MODULE=on
+    goos:
+      # - linux
+      - darwin
+    goarch:
+      # - amd64
+      # - arm
+      - arm64
+    # goarm:
+    #   - "7"
+    flags:
+      - -trimpath
+    main: ./cmd/
+    binary: bin/manager
+    ldflags:
+      - -s -w
+      - -X internal/build.Name={{ .ProjectName }}
+      - -X internal/build.Commit={{ .Commit }}
+      - -X internal/build.Time={{ .CommitDate }}
+      - -X internal/build.Version={{ .Version }}
+      - -X internal/telemetry.segmentToken={{ if index .Env "SEGMENT_TOKEN" }}{{ .Env.SEGMENT_TOKEN }}{{ else }}""{{ end }}
+    tags:
+      - netgo
+    builder: go
+
+changelog:
+  sort: asc
+  use: github
+  format: "{{ .SHA }}: {{ .Message }}{{ with .AuthorUsername }} by @{{ . }}{{ end }}"
+  filters:
+    exclude:
+      - "^test:"
+      - "^test\\("
+      - "^(build|ci): "
+      - "^ci\\("
+      - "^chore:"
+      - "^chore\\("
+      - "merge conflict"
+      - "merge conflict"
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+  groups:
+    - title: "⛔️ Breaking Changes ⛔️"
+      regexp: '^.*?(BREAKING CHANGE)(\([[:word:]]+\))??!?:.+$'
+      order: 100
+    - title: "🚀 New Features 🚀"
+      regexp: '^.*?(feat|enh|enhancement)(\([[:word:]]+\))??!?:.+$'
+      order: 150
+    - title: "🔐 Security updates 🔐"
+      regexp: '^.*?sec(\([[:word:]]+\))??!?:.+$'
+      order: 200
+    - title: "🐛 Notable Fixes 🐛"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 300
+    - title: "📄 Documentation updates 📄"
+      regexp: ^.*?docs?(\([[:word:]]+\))??!?:.+$
+      order: 400
+    - title: "✨ Notable Changes ✨"
+      order: 9999
+
+release:
+  github:
+    owner: zerospiel # TODO:
+    name: hmc
+  draft: true
+  replace_existing_draft: true
+  replace_existing_artifacts: true
+
+  # Useful if you want to delay the creation of the tag in the remote.
+  # You can create the tag locally, but not push it, and run GoReleaser.
+  # It'll then set the `target_commitish` portion of the GitHub release to the
+  # value of this field.
+  # Only works on GitHub.
+  #
+  # Default: ''.
+  # Templates: allowed.
+  target_commitish: "{{ .Commit }}"
+  prerelease: auto
+  make_latest: true
+  mode: replace
+
+  # skip_upload: true
+  # disable: true
+
+  header: |
+    ## 📋 Components Versions 📋
+
+    | Provider Name | Version |
+    | --- | --- |
+    | Cluster API | {{ .Env.CHART_CLUSTER_API_VERSION }} |
+    | Cluster API Provider AWS | {{ .Env.CHART_CLUSTER_API_PROVIDER_AWS_VERSION }} |
+    | Cluster API Provider Azure | {{ .Env.CHART_CLUSTER_API_PROVIDER_AZURE_VERSION }} |
+    | Cluster API Provider Docker | {{ .Env.CHART_CLUSTER_API_PROVIDER_DOCKER_VERSION }} |
+    | Cluster API Provider GCP | {{ .Env.CHART_CLUSTER_API_PROVIDER_GCP_VERSION }} |
+    | Cluster API Provider Infoblox | {{ .Env.CHART_CLUSTER_API_PROVIDER_INFOBLOX_VERSION }} |
+    | Cluster API Provider IPAM | {{ .Env.CHART_CLUSTER_API_PROVIDER_IPAM_VERSION }} |
+    | Cluster API Provider k0smotron | {{ .Env.CHART_CLUSTER_API_PROVIDER_K0SPROJECT_K0SMOTRON_VERSION }} |
+    | Cluster API Provider OpenStack (ORC) | {{ .Env.CHART_CLUSTER_API_PROVIDER_OPENSTACK_VERSION }} ({{ .Env.CHART_ORC_VERSION }}) |
+    | Cluster API Provider vSphere | {{ .Env.CHART_CLUSTER_API_PROVIDER_VSPHERE_VERSION }} |
+    | Projectsveltos | {{ .Env.CHART_PROJECTSVELTOS_VERSION }} |
+
+    ---
+
+  footer: |
+    ---
+    **Full Changelog**: https://github.com/zerospiel/hmc/compare/{{.PreviousTag}}...{{.Tag}}
+
+  extra_files:
+    - glob: ./install.yaml
+    - glob: ./templates/provider/kcm-templates/files/release.yaml
+
+  # Upload metadata.json and artifacts.json to the release as well.
+  include_meta: true
+
+dockers:
+  # - id: linux-amd64
+  #   goos: linux
+  #   goarch: amd64
+  #   image_templates:
+  #     - "ghcr.io/zerospiel/hmc/controller:{{ .Version }}-amd64"
+  #   skip_push: false
+  #   dockerfile: "goreleaser.dockerfile"
+  #   use: buildx
+  #   build_flag_templates:
+  #     - --label=org.opencontainers.image.title={{ .ProjectName }}
+  #     - --label=org.opencontainers.image.description={{ .ProjectName }}
+  #     - --label=org.opencontainers.image.url=https://github.com/k0rdent/kcm
+  #     - --label=org.opencontainers.image.source=https://github.com/k0rdent/kcm
+  #     - --label=org.opencontainers.image.version={{ .Version }}
+  #     - --label=org.opencontainers.image.created={{ time "2006-01-02T15:04:05Z07:00" }}
+  #     - --label=org.opencontainers.image.revision={{ .FullCommit }}
+  #     - --label=org.opencontainers.image.licenses=Apache-2.0
+  #     - --platform=linux/amd64
+  - id: linux-arm64
+    goos: darwin
+    goarch: arm64
+    image_templates:
+      - "ghcr.io/zerospiel/hmc/controller:{{ .Version }}-arm64v8"
+    skip_push: false
+    dockerfile: "goreleaser.dockerfile"
+    use: buildx
+    build_flag_templates:
+      - --label=org.opencontainers.image.title={{ .ProjectName }}
+      - --label=org.opencontainers.image.description={{ .ProjectName }}
+      - --label=org.opencontainers.image.url=https://github.com/k0rdent/kcm
+      - --label=org.opencontainers.image.source=https://github.com/k0rdent/kcm
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.created={{ time "2006-01-02T15:04:05Z07:00" }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.licenses=Apache-2.0
+      - --platform=linux/arm64/v8
+  # - id: linux-armv7
+  #   goos: linux
+  #   goarch: arm
+  #   goarm: "7"
+  #   image_templates:
+  #     - "ghcr.io/zerospiel/hmc/controller:{{ .Version }}-armv7"
+  #   skip_push: false
+  #   dockerfile: "goreleaser.dockerfile"
+  #   use: buildx
+  #   build_flag_templates:
+  #     - --label=org.opencontainers.image.title={{ .ProjectName }}
+  #     - --label=org.opencontainers.image.description={{ .ProjectName }}
+  #     - --label=org.opencontainers.image.url=https://github.com/k0rdent/kcm
+  #     - --label=org.opencontainers.image.source=https://github.com/k0rdent/kcm
+  #     - --label=org.opencontainers.image.version={{ .Version }}
+  #     - --label=org.opencontainers.image.created={{ time "2006-01-02T15:04:05Z07:00" }}
+  #     - --label=org.opencontainers.image.revision={{ .FullCommit }}
+  #     - --label=org.opencontainers.image.licenses=Apache-2.0
+  #     - --platform=linux/arm/v7
+
+docker_manifests:
+  - id: default
+    name_template: "ghcr.io/zerospiel/hmc/controller:{{ .Version }}"
+    image_templates:
+      # - "ghcr.io/zerospiel/hmc/controller:{{ .Version }}-amd64"
+      - "ghcr.io/zerospiel/hmc/controller:{{ .Version }}-arm64v8"
+      # - "ghcr.io/zerospiel/hmc/controller:{{ .Version }}-armv7"
+    skip_push: false
+    use: docker
