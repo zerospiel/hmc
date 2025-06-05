@@ -129,7 +129,7 @@ test: generate-all envtest tidy external-crd ## Run tests.
 # Utilize Kind or modify the e2e tests to load the image locally, enabling
 # compatibility with other vendors.
 .PHONY: test-e2e
-test-e2e: cli-install ## Run the e2e tests using a Kind k8s instance as the management cluster.
+test-e2e: ## Run the e2e tests using a Kind k8s instance as the management cluster.
 	@if [ "$$GINKGO_LABEL_FILTER" ]; then \
 		ginkgo_label_flag="-ginkgo.label-filter=$$GINKGO_LABEL_FILTER"; \
 	fi; \

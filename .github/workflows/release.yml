@@ -3,7 +3,7 @@ name: Release KCM
 on:
   push:
     tags:
-      - "*"
+      - "v*" # only the v-prefixed tags
 
 jobs:
   release:
