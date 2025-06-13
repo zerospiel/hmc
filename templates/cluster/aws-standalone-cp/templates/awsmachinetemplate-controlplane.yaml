@@ -19,6 +19,10 @@ spec:
         # Makes CAPA use k0s bootstrap cloud-init directly and not via SSM
         # Simplifies the VPC setup as we do not need custom SSM endpoints etc.
         insecureSkipSecretsManager: true
+      {{- range $id := .Values.controlPlane.securityGroupIDs }}
+      additionalSecurityGroups:
+        - id: {{ $id }}
+      {{- end }}
       publicIP: {{ .Values.publicIP }}
       rootVolume:
         size: {{ .Values.controlPlane.rootVolumeSize }}
