@@ -50,6 +50,7 @@ func Test_priorityToTier(t *testing.T) {
 func Test_nonEmptyRegistryCredentialsConfig(t *testing.T) {
 	testNamespace := "default"
 	testSecretName := "secret"
+	testCertSecretName := "cert-secret"
 	for _, tc := range []struct {
 		tcName string
 		repo   *sourcev1.HelmRepository
@@ -66,9 +67,14 @@ func Test_nonEmptyRegistryCredentialsConfig(t *testing.T) {
 				Name: testSecretName,
 			},
 		}}},
+		{tcName: "with certsecret ref", repo: &sourcev1.HelmRepository{Spec: sourcev1.HelmRepositorySpec{
+			CertSecretRef: &fluxcdmeta.LocalObjectReference{
+				Name: testCertSecretName,
+			},
+		}}},
 	} {
 		t.Run(tc.tcName, func(t *testing.T) {
-			config := generateRegistryCredentialsConfig(testNamespace, tc.repo.Spec.Insecure, tc.repo.Spec.SecretRef)
+			config := generateRegistryCredentialsConfig(testNamespace, tc.repo.Spec.Insecure, tc.repo.Spec.SecretRef, tc.repo.Spec.CertSecretRef)
 			require.NotNil(t, config)
 			require.Equal(t, tc.repo.Spec.Insecure, config.PlainHTTP)
 
@@ -81,6 +87,11 @@ func Test_nonEmptyRegistryCredentialsConfig(t *testing.T) {
 				require.Equal(t, testNamespace, config.CredentialsSecretRef.Namespace)
 			} else {
 				require.Nil(t, config.CredentialsSecretRef)
+			}
+
+			if tc.repo.Spec.CertSecretRef != nil {
+				require.Equal(t, testCertSecretName, config.CASecretRef.Name)
+				require.Equal(t, testNamespace, config.CASecretRef.Namespace)
 			}
 		})
 	}
