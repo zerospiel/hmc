@@ -18,36 +18,38 @@ set -eu
 
 RELEASE_FILE=${RELEASE_FILE:-templates/provider/kcm-templates/files/release.yaml}
 TEMPLATE_DIR=${TEMPLATE_DIR:-templates/provider/kcm-templates/files/templates}
+BASE_COMMIT=${BASE_COMMIT:-origin/main}
+HEAD_COMMIT=${HEAD_COMMIT:-HEAD}
 
-# Get tracked + untracked file changes
-TRACKED_CHANGED=$(git diff --name-only HEAD -- "$TEMPLATE_DIR")
+COMMITTED_CHANGED=$(git diff --name-only "$BASE_COMMIT"...$HEAD_COMMIT -- "$TEMPLATE_DIR")
+TRACKED_CHANGED=$(git diff --name-only -- "$TEMPLATE_DIR")
 UNTRACKED_CHANGED=$(git ls-files --others --exclude-standard "$TEMPLATE_DIR")
-
-ALL_CHANGED=$(echo -e "$TRACKED_CHANGED\n$UNTRACKED_CHANGED" | sort -u | grep -E '\.ya?ml$' || true)
+ALL_CHANGED=$(echo -e "$COMMITTED_CHANGED\n$TRACKED_CHANGED\n$UNTRACKED_CHANGED" \
+  | sort -u | grep -E '\.ya?ml$' || true)
 
 for file in $ALL_CHANGED; do
-  [[ ! -f "$file" ]] && continue
+  [[ -f "$file" ]] || continue
 
-  kind=$(yq e '.kind' "$file")
+  kind=$(${YQ} e '.kind' "$file")
   [[ "$kind" != "ProviderTemplate" ]] && continue
 
-  new_name=$(yq e '.metadata.name' "$file")
-  chart_name=$(yq e '.spec.helm.chartSpec.chart' "$file")
+  new_name=$(${YQ} e '.metadata.name' "$file")
+  chart_name=$(${YQ} e '.spec.helm.chartSpec.chart' "$file")
 
   if [[ "$chart_name" == "kcm" ]]; then
-    current=$(yq e '.spec.kcm.template' "$RELEASE_FILE")
-    [[ "$current" != "$new_name" ]] && yq e -i ".spec.kcm.template = \"$new_name\"" "$RELEASE_FILE"
+    current=$(${YQ} e '.spec.kcm.template' "$RELEASE_FILE")
+    [[ "$current" != "$new_name" ]] && ${YQ} e -i ".spec.kcm.template = \"$new_name\"" "$RELEASE_FILE"
     echo "Updated spec.kcm.template → $new_name"
   elif [[ "$chart_name" == "cluster-api" ]]; then
-    current=$(yq e '.spec.capi.template' "$RELEASE_FILE")
-    [[ "$current" != "$new_name" ]] && yq e -i ".spec.capi.template = \"$new_name\"" "$RELEASE_FILE"
+    current=$(${YQ} e '.spec.capi.template' "$RELEASE_FILE")
+    [[ "$current" != "$new_name" ]] && ${YQ} e -i ".spec.capi.template = \"$new_name\"" "$RELEASE_FILE"
     echo "Updated spec.capi.template → $new_name"
   else
-    index=$(yq e ".spec.providers[] | select(.name == \"$chart_name\") | key" "$RELEASE_FILE")
-    if [[ ! -z "$index" && "$index" != "null" ]]; then
-      current=$(yq e ".spec.providers[$index].template" "$RELEASE_FILE")
+    index=$(${YQ} e ".spec.providers[] | select(.name == \"$chart_name\") | key" "$RELEASE_FILE")
+    if [[ -n "$index" && "$index" != "null" ]]; then
+      current=$(${YQ} e ".spec.providers[$index].template" "$RELEASE_FILE")
       if [[ "$current" != "$new_name" ]]; then
-        yq e -i ".spec.providers[$index].template = \"$new_name\"" "$RELEASE_FILE"
+        ${YQ} e -i ".spec.providers[$index].template = \"$new_name\"" "$RELEASE_FILE"
         echo "Updated provider $chart_name template → $new_name"
       fi
     else
@@ -55,3 +57,4 @@ for file in $ALL_CHANGED; do
     fi
   fi
 done
+

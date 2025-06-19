@@ -16,11 +16,16 @@
 
 set -eu
 
-# Get tracked + untracked file changes
-TRACKED_CHANGED_FILES=$(git diff --name-only HEAD)
-UNTRACKED_FILES=$(git ls-files --others --exclude-standard)
+BASE_COMMIT="${BASE_COMMIT:-origin/main}"
+HEAD_COMMIT="${HEAD_COMMIT:-HEAD}"
 
-ALL_CHANGED_FILES=$(echo -e "$TRACKED_CHANGED_FILES\n$UNTRACKED_FILES" | sort -u | grep -E '^templates/(provider|cluster)/' | grep -v '^templates/provider/kcm-templates/' || true)
+COMMITTED_CHANGED=$(git diff --name-only "$BASE_COMMIT"...$HEAD_COMMIT)
+TRACKED_CHANGED=$(git diff --name-only)
+UNTRACKED_CHANGED=$(git ls-files --others --exclude-standard)
+ALL_CHANGED_FILES=$(echo -e "$COMMITTED_CHANGED\n$TRACKED_CHANGED\n$UNTRACKED_CHANGED" \
+  | sort -u \
+  | grep -E '^templates/(provider|cluster)/' \
+  | grep -v '^templates/provider/kcm-templates/' || true)
 
 declare -A UPDATED_CHARTS
 
@@ -33,9 +38,8 @@ for file in $ALL_CHANGED_FILES; do
         break
       fi
 
-      # Skip if top-level version already changed compared to HEAD
-      version_current=$(yq e '.version' "$chart_file")
-      version_committed=$(git show "HEAD:$chart_file" 2>/dev/null | yq e '.version' - || echo "")
+      version_current=$(${YQ} e '.version' "$chart_file")
+      version_committed=$(git show "$BASE_COMMIT:$chart_file" 2>/dev/null | ${YQ} e '.version' - || echo "")
 
       if [[ "$version_current" != "$version_committed" ]]; then
         echo "Skipping $chart_file: .version already modified ($version_committed → $version_current)"
@@ -45,7 +49,7 @@ for file in $ALL_CHANGED_FILES; do
           minor="${BASH_REMATCH[2]}"
           patch="${BASH_REMATCH[3]}"
           new_version="${major}.${minor}.$((patch + 1))"
-          yq e -i ".version = \"$new_version\"" "$chart_file"
+          ${YQ} e -i ".version = \"$new_version\"" "$chart_file"
           echo "Bumped $chart_file: $version_current → $new_version"
         else
           echo "Invalid semver in $chart_file: $version_current" >&2

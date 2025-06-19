@@ -122,11 +122,22 @@ jobs:
         run: GOLANGCI_LINT_TIMEOUT=10m make lint
 
       - name: Verify all generated pieces are up-to-date
-        run: make generate-all && git add -N . && git diff --exit-code
+        env:
+          BASE_COMMIT: "origin/${{ github.event.pull_request.base.ref }}"
+        shell: bash
+        run: |
+          make generate-all
+          git add -N .
+          if ! git diff --exit-code; then
+            echo "::error::Generated files are out of date. Please run 'make generate-all'."
+            git diff --name-only
+            exit 1
+          fi
 
       - name: Unit tests
-        run: |
-          make test
+        env:
+          BASE_COMMIT: "origin/${{ github.event.pull_request.base.ref }}"
+        run: make test
 
       - name: Get outputs
         id: vars
@@ -174,8 +185,7 @@ jobs:
           GINKGO_LABEL_FILTER: 'controller'
           CLUSTER_DEPLOYMENT_PREFIX: ${{ needs.lint-test.outputs.clusterprefix }}
           VERSION: ${{ needs.lint-test.outputs.version }}
-        run: |
-          make test-e2e
+        run: make test-e2e
 
       - name: Archive test results
         uses: actions/upload-artifact@v4
@@ -319,8 +329,8 @@ jobs:
           GINKGO_LABEL_FILTER: 'provider:cloud'
           CLUSTER_DEPLOYMENT_PREFIX: ${{ needs.lint-test.outputs.clusterprefix }}
           VERSION: ${{ needs.lint-test.outputs.version }}
-        run: |
-          make test-e2e
+        run: make test-e2e
+
       - name: Archive test results
         uses: actions/upload-artifact@v4
         if: always()
@@ -398,8 +408,7 @@ jobs:
           GINKGO_LABEL_FILTER: 'provider:onprem'
           CLUSTER_DEPLOYMENT_PREFIX: ${{ needs.lint-test.outputs.clusterprefix }}
           VERSION: ${{ needs.lint-test.outputs.version }}
-        run: |
-          make test-e2e
+        run: make test-e2e
 
       - name: Archive test results
         uses: actions/upload-artifact@v4
