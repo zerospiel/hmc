@@ -102,15 +102,15 @@ templates-generate:
 
 .PHONY: bump-chart-version
 bump-chart-version: yq
-	@$(SHELL) hack/chart-version.bash
+	@YQ=$(YQ) $(SHELL) hack/chart-version.bash
 
 .PHONY: update-release
 update-release: yq
-	@$(SHELL) hack/update-release.bash
+	@YQ=$(YQ) $(SHELL) hack/update-release.bash
 
 .PHONY: update-dev-confs
 update-dev-confs: yq
-	@$(SHELL) hack/update-dev-configs.bash
+	@YQ=$(YQ) $(SHELL) hack/update-dev-configs.bash
 
 .PHONY: capo-orc-fetch
 capo-orc-fetch: CAPO_DIR := $(PROVIDER_TEMPLATES_DIR)/cluster-api-provider-openstack

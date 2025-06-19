@@ -18,31 +18,33 @@ set -eu
 
 TEMPLATE_DIR=${TEMPLATE_DIR:-templates/provider/kcm-templates/files/templates}
 CONFIG_DEV_DIR=${CONFIG_DEV_DIR:-config/dev}
+BASE_COMMIT=${BASE_COMMIT:-origin/main}
+HEAD_COMMIT=${HEAD_COMMIT:-HEAD}
 
-# Get tracked + untracked changed files
-TRACKED_CHANGED=$(git diff --name-only HEAD -- "$TEMPLATE_DIR")
+COMMITTED_CHANGED=$(git diff --name-only "$BASE_COMMIT"...$HEAD_COMMIT -- "$TEMPLATE_DIR")
+TRACKED_CHANGED=$(git diff --name-only -- "$TEMPLATE_DIR")
 UNTRACKED_CHANGED=$(git ls-files --others --exclude-standard "$TEMPLATE_DIR")
-ALL_CHANGED=$(echo -e "$TRACKED_CHANGED\n$UNTRACKED_CHANGED" | sort -u | grep -E '\.ya?ml$' || true)
+
+ALL_CHANGED=$(echo -e "$COMMITTED_CHANGED\n$TRACKED_CHANGED\n$UNTRACKED_CHANGED" \
+  | sort -u | grep -E '\.ya?ml$' || true)
 
 for file in $ALL_CHANGED; do
-  # Skip deleted/missing files
   [[ -f "$file" ]] || continue
 
-  # Only process ClusterTemplate kind
-  kind=$(yq e '.kind' "$file")
+  kind=$(${YQ} e '.kind' "$file")
   [[ "$kind" != "ClusterTemplate" ]] && continue
 
-  template_name=$(yq e '.metadata.name' "$file")
-  template_type=$(yq e '.spec.helm.chartSpec.chart' "$file")
+  template_name=$(${YQ} e '.metadata.name' "$file")
+  template_type=$(${YQ} e '.spec.helm.chartSpec.chart' "$file")
 
   for deployment in "$CONFIG_DEV_DIR"/*-clusterdeployment.yaml; do
-    [[ ! -f "$deployment" ]] && continue
+    [[ -f "$deployment" ]] || continue
 
-    current_template=$(yq e '.spec.template' "$deployment")
+    current_template=$(${YQ} e '.spec.template' "$deployment")
 
     if [[ "$current_template" == *"$template_type"* && "$current_template" != "$template_name" ]]; then
       echo "Updating $deployment: $current_template → $template_name"
-      yq e -i ".spec.template = \"$template_name\"" "$deployment"
+      ${YQ} e -i ".spec.template = \"$template_name\"" "$deployment"
     fi
   done
 done

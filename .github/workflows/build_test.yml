@@ -122,7 +122,15 @@ jobs:
         run: GOLANGCI_LINT_TIMEOUT=10m make lint
 
       - name: Verify all generated pieces are up-to-date
-        run: make generate-all && git add -N . && git diff --exit-code
+        shell: bash
+        run: |
+          make BASE_COMMIT=origin/main generate-all
+          git add -N .
+          if ! git diff --exit-code; then
+            echo "::error::Generated files are out of date. Please run 'make generate-all'."
+            git diff --name-only
+            exit 1
+          fi
 
       - name: Unit tests
         run: |
