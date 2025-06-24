@@ -64,11 +64,17 @@ type ClusterIPAMClaimSpec struct {
 
 // AddressSpaceSpec defines the ip address space that will be allocated
 type AddressSpaceSpec struct {
+	// Gateway to be used for the address space
+	Gateway string `json:"gateway,omitempty"`
+
 	// CIDR notation of the allocated address space
 	CIDR string `json:"cidr,omitempty"`
 
 	// IPAddresses to be allocated
 	IPAddresses []string `json:"ipAddresses,omitempty"`
+
+	// Prefix is the network prefix to use.
+	Prefix int `json:"prefix,omitempty"`
 }
 
 // ClusterIPAMClaimStatus defines the observed state of ClusterIPAMClaim
