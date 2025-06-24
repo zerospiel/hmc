@@ -192,8 +192,9 @@ jobs:
         if: always()
         with:
           name: support-bundles
-          path: |
-            *.tar.gz
+          path: ~/work/kcm/kcm/support-bundle-*.tar.gz"
+          retention-days: 1
+          overwrite: true
 
   push-public:
     name: Build and Push Artifacts When Required
