@@ -337,8 +337,9 @@ jobs:
         if: always()
         with:
           name: support-bundles
-          path: |
-            *.tar.gz
+          path: ~/work/kcm/kcm/support-bundle-*.tar.gz"
+          retention-days: 1
+          overwrite: true
 
   provider-onprem-e2etest:
     name: E2E On-Prem Providers
@@ -416,8 +417,9 @@ jobs:
         if: always()
         with:
           name: support-bundles
-          path: |
-            *.tar.gz
+          path: ~/work/kcm/kcm/support-bundle-*.tar.gz"
+          retention-days: 1
+          overwrite: true
 
   cleanup:
     name: Cleanup
