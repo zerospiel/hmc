@@ -7,10 +7,6 @@ on delivering a open source approach to providing an enterprise grade
 multi-cluster kubernetes management solution based entirely on standard open
 source tooling that works across private or public clouds.
 
-We like to say that Project 0x2A (42) is the answer to life, the universe, and
-everything ...  Or, at least, the Kubernetes sprawl we find ourselves faced with
-in real life!
-
 ## Documentation
 
 Detailed documentation is available in [k0rdent Docs](https://docs.k0rdent.io)
@@ -158,7 +154,7 @@ spec:
 
 4. Check the status of the newly created `ClusterDeployment` object:
 
-`kubectl -n <clusterdeployment-namespace> get ClusterDeployment <clusterdeployment-name> -o=yaml`
+`kubectl -n <clusterdeployment-namespace> get clusterdeployments <clusterdeployment-name> -o=yaml`
 
 5. Wait for infrastructure to be provisioned and the cluster to be deployed (the
 provisioning starts only when `spec.dryRun` is disabled):
@@ -176,7 +172,7 @@ kubectl -n <clusterdeployment-namespace> get cluster <clusterdeployment-name> -o
 6. Retrieve the `kubeconfig` of your cluster deployment:
 
 ```bash
-kubectl get secret -n kcm-system <clusterdeployment-name>-kubeconfig -o=jsonpath={.data.value} | base64 -d > kubeconfig
+kubectl get secret -n kcm-system <clusterdeployment-name>-kubeconfig -o go-template='{{.data.value|base64decode}}' > kubeconfig
 ```
 
 ### Dry run
@@ -187,156 +183,9 @@ If no configuration (`spec.config`) provided, the `ClusterDeployment` object wil
 be populated with defaults (default configuration can be found in the
 corresponding `Template` status) and automatically marked as `dryRun`.
 
-Here is an example of the `ClusterDeployment` object with default configuration:
-
-```yaml
-apiVersion: k0rdent.mirantis.com/v1beta1
-kind: ClusterDeployment
-metadata:
-  name: <cluster-name>
-  namespace: <cluster-namespace>
-spec:
-  template: aws-standalone-cp-1-0-0
-  credential: <aws-credentials>
-  dryRun: true
-  config:
-    bastion:
-      allowedCIDRBlocks: []
-      ami: ""
-      disableIngressRules: false
-      enabled: false
-      instanceType: t2.micro
-    clusterAnnotations: {}
-    clusterIdentity:
-      kind: AWSClusterStaticIdentity
-      name: ""
-    clusterLabels: {}
-    clusterNetwork:
-      pods:
-        cidrBlocks:
-        - 10.244.0.0/16
-      services:
-        cidrBlocks:
-        - 10.96.0.0/12
-    controlPlane:
-      amiID: ""
-      iamInstanceProfile: control-plane.cluster-api-provider-aws.sigs.k8s.io
-      imageLookup:
-        baseOS: ""
-        format: amzn2-ami-hvm*-gp2
-        org: "137112412989"
-      instanceType: ""
-      rootVolumeSize: 8
-      uncompressedUserData: false
-    controlPlaneNumber: 3
-    k0s:
-      api:
-        extraArgs: {}
-      files: []
-      version: v1.32.5+k0s.1
-    publicIP: false
-    region: ""
-    sshKeyName: ""
-    worker:
-      amiID: ""
-      iamInstanceProfile: control-plane.cluster-api-provider-aws.sigs.k8s.io
-      imageLookup:
-        baseOS: ""
-        format: amzn2-ami-hvm*-gp2
-        org: "137112412989"
-      instanceType: ""
-      rootVolumeSize: 8
-      uncompressedUserData: false
-    workersNumber: 2
-```
-
 After you adjust your configuration and ensure that it passes validation
 (`TemplateReady` condition from `status.conditions`), remove the `spec.dryRun`
 flag to proceed with the deployment.
-
-Here is an example of a `ClusterDeployment` object that passed the validation
-and has been successfully deployed:
-
-```yaml
-apiVersion: k0rdent.mirantis.com/v1beta1
-kind: ClusterDeployment
-metadata:
-  name: <cluster-name>
-  namespace: <cluster-namespace>
-spec:
-  template: aws-standalone-cp-1-0-0
-  credential: <aws-credential>
-  config:
-    region: us-east-2
-    publicIP: true
-    controlPlaneNumber: 1
-    workersNumber: 1
-    controlPlane:
-      instanceType: t3.small
-    worker:
-      instanceType: t3.small
-status:
-  conditions:
-  - lastTransitionTime: "2025-05-21T09:38:56Z"
-    message: ""
-    observedGeneration: 1
-    reason: Succeeded
-    status: "True"
-    type: CredentialReady
-  - lastTransitionTime: "2025-05-21T09:38:57Z"
-    message: Helm install succeeded for release kcm-system/<cluster-name>.v1 with chart
-      aws-standalone-cp@1.0.0
-    reason: InstallSucceeded
-    status: "True"
-    type: HelmReleaseReady
-  - lastTransitionTime: "2025-05-21T09:38:56Z"
-    message: ""
-    observedGeneration: 1
-    reason: Succeeded
-    status: "True"
-    type: HelmChartReady
-  - lastTransitionTime: "2025-05-21T09:38:56Z"
-    message: ""
-    observedGeneration: 1
-    reason: Succeeded
-    status: "True"
-    type: TemplateReady
-  - lastTransitionTime: "2025-05-21T09:45:37Z"
-    message: Object is ready
-    reason: Succeeded
-    status: "True"
-    type: Ready
-  - lastTransitionTime: "2025-05-21T09:44:22Z"
-    message: ""
-    observedGeneration: 1
-    reason: Succeeded
-    status: "True"
-    type: SveltosProfileReady
-  - lastTransitionTime: "2025-05-21T09:38:56Z"
-    message: ""
-    observedGeneration: 1
-    reason: Succeeded
-    status: "True"
-    type: FetchServicesStatusSuccess
-  - lastTransitionTime: "2025-05-21T09:38:56Z"
-    message: ""
-    observedGeneration: 1
-    reason: Succeeded
-    status: "True"
-    type: ServicesReferencesValidation
-  - lastTransitionTime: "2025-05-21T09:38:56Z"
-    message: 0/0
-    reason: Succeeded
-    status: "True"
-    type: ServicesInReadyState
-  - lastTransitionTime: "2025-05-21T09:45:37Z"
-    message: ""
-    observedGeneration: 1
-    reason: InfoReported
-    status: "True"
-    type: CAPIClusterSummary
-  observedGeneration: 1
-```
 
 ## Cleanup
 
