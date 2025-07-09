@@ -1,6 +1,6 @@
 name: CI
 on:
-  pull_request_target:
+  pull_request:
     types:
       - labeled
       - opened
@@ -183,7 +183,7 @@ jobs:
     permissions:
       packages: write
     env:
-      REGISTRY_REPO: oci://ghcr.io/k0rdent/kcm/charts-ci
+      REGISTRY_REPO: oci://ghcr.io/zerospiel/hmc/charts-ci
     steps:
       - name: Checkout repository
         if: ${{ needs.authorize.outputs.public_repo == 'true' }}
@@ -213,11 +213,11 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REGISTRY: ghcr.io/k0rdent/kcm
+          REGISTRY: ghcr.io/zerospiel/hmc
           IMAGE_NAME: controller-ci
           VERSION: ${{ needs.lint-test.outputs.version }}
           SKIP_SCM_RELEASE: true
-          # SKIP_ARM: true
+          SKIP_ARM: true
         with:
           distribution: goreleaser
           version: '~> v2'
@@ -272,8 +272,8 @@ jobs:
       - name: Set public registry env variables
         if: ${{ steps.provider_check.outputs.skip != 'true' && env.PUBLIC_REPO == 'true' }}
         run: |
-          echo "REGISTRY_REPO=oci://ghcr.io/k0rdent/kcm/charts-ci" >> $GITHUB_ENV
-          echo "IMG=ghcr.io/k0rdent/kcm/controller-ci:${{ needs.lint-test.outputs.version }}" >> $GITHUB_ENV
+          echo "REGISTRY_REPO=oci://ghcr.io/zerospiel/hmc/charts-ci" >> $GITHUB_ENV
+          echo "IMG=ghcr.io/zerospiel/hmc/controller-ci:${{ needs.lint-test.outputs.version }}" >> $GITHUB_ENV
 
       - name: Check remote presence
         id: remote_provider_check
@@ -384,8 +384,8 @@ jobs:
       - name: Set public registry env variables
         if: ${{ env.PUBLIC_REPO == 'true' }}
         run: |
-          echo "REGISTRY_REPO=oci://ghcr.io/k0rdent/kcm/charts-ci" >> $GITHUB_ENV
-          echo "IMG=ghcr.io/k0rdent/kcm/controller-ci:${{ needs.lint-test.outputs.version }}" >> $GITHUB_ENV
+          echo "REGISTRY_REPO=oci://ghcr.io/zerospiel/hmc/charts-ci" >> $GITHUB_ENV
+          echo "IMG=ghcr.io/zerospiel/hmc/controller-ci:${{ needs.lint-test.outputs.version }}" >> $GITHUB_ENV
 
       - name: Setup Go and Cache
         if: steps.provider_check.outputs.skip != 'true'
