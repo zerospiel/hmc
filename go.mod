@@ -5,11 +5,13 @@ go 1.24.5
 require (
 	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/a8m/envsubst v1.4.3
+	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/cert-manager/cert-manager v1.18.2
 	github.com/fluxcd/helm-controller/api v1.3.0
 	github.com/fluxcd/pkg/apis/meta v1.18.0
 	github.com/fluxcd/pkg/runtime v0.73.0
 	github.com/fluxcd/source-controller/api v1.6.2
+	github.com/go-logr/logr v1.4.3
 	github.com/google/cel-go v0.26.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-retryablehttp v0.7.8
@@ -85,7 +87,6 @@ require (
 	github.com/go-errors/errors v1.5.1 // indirect
 	github.com/go-gorp/gorp/v3 v3.1.0 // indirect
 	github.com/go-ldap/ldap/v3 v3.4.8 // indirect
-	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/zapr v1.3.0 // indirect
 	github.com/go-openapi/jsonpointer v0.21.1 // indirect
 	github.com/go-openapi/jsonreference v0.21.0 // indirect
