@@ -267,7 +267,7 @@ jobs:
         with:
           config: ${{ needs.authorize.outputs.config }}
           provider: vsphere
-          mode: absent
+          # mode: absent
 
       - name: Set public registry env variables
         if: ${{ steps.provider_check.outputs.skip != 'true' && env.PUBLIC_REPO == 'true' }}
