@@ -2,8 +2,8 @@ package tracker
 
 import "context"
 
-// Collector defines an interface that provides metrics from a cluster.
 type (
+	// Collector defines an interface that provides metrics from a cluster.
 	Collector interface {
 		CollectFromCluster(ctx context.Context, cluster string) (map[string]any, error)
 	}
