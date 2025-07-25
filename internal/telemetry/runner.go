@@ -17,7 +17,6 @@ package telemetry
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math/rand/v2"
 	"runtime"
@@ -25,12 +24,10 @@ import (
 
 	"github.com/segmentio/analytics-go/v3"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/K0rdent/kcm/internal/build"
 	"github.com/K0rdent/kcm/internal/telemetry/collector"
-	"github.com/K0rdent/kcm/internal/utils"
 )
 
 // Collector is the generic interface for a telemetry collector.
@@ -53,70 +50,11 @@ type Runner struct {
 
 var _ manager.Runnable = (*Runner)(nil)
 
-// Mode defines the way telemetry is collected and stored.
-type Mode string
-
-const (
-	ModeDisabled Mode = "disabled"
-	ModeLocal    Mode = "local"
-	ModeOnline   Mode = "online"
-)
-
-type Config struct {
-	MgmtClient       client.Client
-	Mode             Mode
-	SystemNamespace  string
-	Interval         time.Duration
-	JitterPercentage uint // ie 10%
-	Concurrency      int
-}
-
-func validateCfg(cfg Config) error {
-	if cfg.Concurrency < 0 {
-		return errors.New("concurrency must be positive")
-	}
-
-	if cfg.Interval < 5*time.Minute {
-		return errors.New("interval must be >5 minutes")
-	}
-
-	if cfg.MgmtClient == nil {
-		return errors.New("management client must be set")
-	}
-
-	return nil
-}
-
-func normalizeConfig(cfg Config) Config {
-	if cfg.Concurrency == 0 {
-		cfg.Concurrency = 5
-	}
-
-	if cfg.Interval < 5*time.Minute {
-		cfg.Interval = 24 * time.Hour
-	}
-
-	if cfg.Mode == "" {
-		cfg.Mode = ModeLocal
-	}
-
-	if cfg.SystemNamespace == "" {
-		cfg.SystemNamespace = utils.DefaultSystemNamespace
-	}
-
-	if cfg.JitterPercentage == 0 {
-		cfg.JitterPercentage = 10
-	}
-
-	return cfg
-}
-
-func NewRunner(cfg Config) (*Runner, error) {
-	if err := validateCfg(cfg); err != nil {
+func NewRunner(cfg *Config) (*Runner, error) {
+	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("failed to validate cfg: %w", err)
 	}
-
-	cfg = normalizeConfig(cfg)
+	cfg.normalize()
 
 	var tr Collector
 	if cfg.Mode == ModeOnline {
