@@ -28,6 +28,8 @@ jobs:
     outputs:
       config: ${{ steps.get_config.outputs.config }}
       public_repo: ${{ steps.get_config.outputs.public_repo }}
+      runner: ${{ steps.get_config.outputs.runner }}
+      skip_arm: ${{ steps.get_config.outputs.skip_arm || 'true' }}
     steps:
       - name: Get Testing Configuration
         id: get_config
@@ -43,7 +45,24 @@ jobs:
             echo "Invalid testing configuration provided"
             exit 1
           fi
-          echo "config=$(echo -n "$config" | base64 -w 0)" >> "$GITHUB_OUTPUT"
+
+          arch=$(echo -n "$config" | yq -r '.architecture // "amd64"')
+          case "$arch" in
+            amd64)
+              echo "runner=ubuntu-latest" >> "$GITHUB_OUTPUT"
+              ;;
+            arm64)
+              echo "runner=ubuntu-24.04-arm" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Error: unsupported architecture '$arch'"
+              echo "Allowed values: 'amd64' or 'arm64'"
+              exit 1
+              ;;
+          esac
+
+          echo "skip_arm=$(echo -n "$config" | grep "architecture:.*arm64" > /dev/null && echo false || echo true)" >> "$GITHUB_OUTPUT"
+          echo "config=$(echo -n "$config" | yq 'del (.architecture) | select(length > 0)' | base64 -w 0)" >> "$GITHUB_OUTPUT"
           if echo "$config" | yq e '... comments=""' | grep -q "hosted"; then
             echo "Hosted cluster deployment was triggered. Using public repository"
             echo "public_repo=true" >> "$GITHUB_OUTPUT"
@@ -136,7 +155,7 @@ jobs:
 
   controller-e2etest:
     name: E2E Controller
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.authorize.outputs.runner || 'ubuntu-latest' }}
     if: ${{ !contains( github.event.pull_request.labels.*.name, 'test e2e') }}
     needs: lint-test
     concurrency:
@@ -173,7 +192,7 @@ jobs:
 
   push-public:
     name: Build and Push Artifacts When Required
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.authorize.outputs.runner || 'ubuntu-latest' }}
     needs:
        - authorize
        - lint-test
@@ -217,7 +236,7 @@ jobs:
           IMAGE_NAME: controller-ci
           VERSION: ${{ needs.lint-test.outputs.version }}
           SKIP_SCM_RELEASE: true
-          SKIP_ARM: true
+          SKIP_ARM: ${{ needs.authorize.outputs.skip_arm }}
         with:
           distribution: goreleaser
           version: '~> v2'
@@ -232,7 +251,7 @@ jobs:
 
   provider-cloud-e2etest:
     name: E2E Cloud Providers
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.authorize.outputs.runner || 'ubuntu-latest' }}
     if: ${{ contains( github.event.pull_request.labels.*.name, 'test e2e') }}
     needs:
       - lint-test

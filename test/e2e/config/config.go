@@ -41,6 +41,13 @@ const (
 	TestingProviderRemote  TestingProvider = "remote"
 )
 
+type Architecture string
+
+var (
+	ArchitectureAmd64 Architecture = "amd64"
+	ArchitectureArm64 Architecture = "arm64"
+)
+
 var (
 	//go:embed config.yaml
 	configBytes []byte
@@ -72,6 +79,9 @@ type ClusterTestingConfig struct {
 	// UpgradeTemplate specifies the name of the template to upgrade to. Ignored if upgrade is set to false.
 	// If unset, the latest template available for the upgrade will be chosen.
 	UpgradeTemplate string `yaml:"upgradeTemplate,omitempty"`
+	// Architecture defines the target architecture for cluster deployment. Supported values are "amd64"
+	// and "arm64".
+	Architecture Architecture `yaml:"architecture,omitempty"`
 }
 
 func Parse() error {
@@ -125,10 +135,16 @@ func SetDefaults(ctx context.Context, cl crclient.Client) {
 		}
 		for i := range Config[provider] {
 			c := Config[provider][i]
+			if c.Architecture == "" {
+				c.Architecture = ArchitectureAmd64
+			}
 			err := c.SetTemplates(clusterTemplates, getTemplateType(provider))
 			Expect(err).NotTo(HaveOccurred())
 
 			if c.Hosted != nil {
+				if c.Hosted.Architecture == "" {
+					c.Hosted.Architecture = c.Architecture
+				}
 				err = c.Hosted.SetTemplates(clusterTemplates, getHostedTemplateType(provider))
 				Expect(err).NotTo(HaveOccurred())
 			}
