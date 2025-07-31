@@ -52,7 +52,21 @@ spec:
             mode: vxlan
         {{- if $global.registry }}
         images:
-          repository: "{{ $global.registry }}"
+          metricsserver:
+            image: "{{ $global.registry }}/metrics-server/metrics-server"
+          kubeproxy:
+            image: "{{ $global.registry }}/k0sproject/kube-proxy"
+          coredns:
+            image: "{{ $global.registry }}/k0sproject/coredns"
+          pause:
+            image: "{{ $global.registry }}/pause"
+          calico:
+            cni:
+              image: "{{ $global.registry }}/k0sproject/calico-cni"
+            node:
+              image: "{{ $global.registry }}/k0sproject/calico-node"
+            kubecontrollers:
+              image: "{{ $global.registry }}/k0sproject/calico-kube-controllers"
         {{- end }}
         extensions:
           helm:
@@ -112,6 +126,12 @@ spec:
                       repository: /kubernetes-csi/livenessprobe
                     nodeDriverRegistrar:
                       repository: /kubernetes-csi/csi-node-driver-registrar
+                  snapshot:
+                    image:
+                      csiSnapshotter:
+                        repository: /kubernetes-csi/csi-snapshotter
+                      csiSnapshotController:
+                        repository: /kubernetes-csi/snapshot-controller
                   {{- end }}
                   controller:
                     cloudConfigSecretName: azure-cloud-provider

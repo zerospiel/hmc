@@ -5,6 +5,7 @@
   "required": [
     "controlPlaneNumber",
     "workersNumber",
+    "clusterIdentity",
     "identityRef"
   ],
   "properties": {
@@ -75,6 +76,13 @@
         }
       }
     },
+    "ccmCanViewAllProjects": {
+      "description": "Specify if OS creds being used grant CCM cross-project access. Influences how cluster name should be generated for CCM.",
+      "type": "boolean"
+    },
+    "ccmEnableUniqueClusterName": {
+      "type": "boolean"
+    },
     "ccmRegional": {
       "description": "Allow OpenStack CCM to set ProviderID with region name",
       "type": "boolean"
@@ -83,6 +91,19 @@
       "description": "Annotations to apply to the cluster",
       "type": "object",
       "additionalProperties": true
+    },
+    "clusterIdentity": {
+      "description": "The OpenStack credentials secret reference, auto-populated",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "description": "Name of the secret with OpenStack credentials",
+          "type": "string"
+        }
+      }
     },
     "clusterLabels": {
       "description": "Labels to apply to the cluster",
@@ -247,7 +268,6 @@
       "description": "OpenStack cluster identity object reference",
       "type": "object",
       "required": [
-        "name",
         "cloudName",
         "region"
       ],
@@ -268,10 +288,6 @@
         },
         "cloudName": {
           "description": "Name of the entry in the clouds.yaml file to use",
-          "type": "string"
-        },
-        "name": {
-          "description": "Name of the identity",
           "type": "string"
         },
         "region": {
