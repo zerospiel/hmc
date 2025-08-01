@@ -69,24 +69,16 @@ type (
 )
 
 func NewSegmentIO(segmentClient analytics.Client, crClient client.Client, concurrency int) (*SegmentIO, error) {
-	s := runtime.NewScheme()
-
-	for _, f := range []func(*runtime.Scheme) error{
-		corev1.AddToScheme,
-		metav1.AddMetaToScheme,
-		kubevirtv1.AddToScheme,
-		appsv1.AddToScheme,
-	} {
-		if err := f(s); err != nil {
-			return nil, fmt.Errorf("failed to add to scheme: %w", err)
-		}
+	childScheme, err := getChildScheme()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create child client scheme: %w", err)
 	}
 
 	return &SegmentIO{
 		expBackoff:   backoff.NewExponentialBackOff(backoff.WithInitialInterval(500*time.Millisecond), backoff.WithMaxElapsedTime(10*time.Second)),
 		segmentCl:    segmentClient,
 		crCl:         crClient,
-		childScheme:  s,
+		childScheme:  childScheme,
 		concurrency:  concurrency,
 		childFactory: defaultClientFactory,
 	}, nil
