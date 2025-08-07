@@ -40,7 +40,7 @@ import (
 	"github.com/K0rdent/kcm/test/utils"
 )
 
-var _ = Describe("AWS Templates", Label("provider:cloud", "provider:aws"), Ordered, func() {
+var _ = Describe("AWS Templates", Label("provider:cloud", "provider:aws"), Ordered, ContinueOnFailure, func() {
 	var (
 		kc                    *kubeclient.KubeClient
 		standaloneClusters    []string
@@ -63,8 +63,6 @@ var _ = Describe("AWS Templates", Label("provider:cloud", "provider:aws"), Order
 				},
 			},
 		}
-
-		providerConfigs []config.ProviderTestingConfig
 	)
 
 	const (
@@ -73,13 +71,6 @@ var _ = Describe("AWS Templates", Label("provider:cloud", "provider:aws"), Order
 	)
 
 	BeforeAll(func() {
-		By("Get testing configuration")
-		providerConfigs = config.Config[config.TestingProviderAWS]
-
-		if len(providerConfigs) == 0 {
-			Skip("AWS ClusterDeployment testing is skipped")
-		}
-
 		By("Ensuring that env vars are set correctly")
 		aws.CheckEnv()
 
@@ -119,13 +110,12 @@ var _ = Describe("AWS Templates", Label("provider:cloud", "provider:aws"), Order
 		}
 	})
 
-	It("should work with an AWS provider", func() {
-		for i, testingConfig := range providerConfigs {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Testing configuration:\n%s\n", testingConfig.String())
-			// Deploy a standalone cluster and verify it is running/ready.
-			// Deploy standalone with an xlarge instance since it will also be
-			// hosting the hosted cluster.
-			GinkgoT().Setenv(clusterdeployment.EnvVarAWSInstanceType, "t3.xlarge")
+	for i, testingConfig := range config.Config[config.TestingProviderAWS] {
+		It(fmt.Sprintf("Verifying AWS cluster deployment. Iteration: %d", i), func() {
+			defer GinkgoRecover()
+			testingConfig.SetDefaults(clusterTemplates, config.TestingProviderAWS)
+
+			By(testingConfig.Description())
 
 			sdName := clusterdeployment.GenerateClusterName(fmt.Sprintf("aws-%d", i))
 			sdTemplate := testingConfig.Template
@@ -144,7 +134,7 @@ var _ = Describe("AWS Templates", Label("provider:cloud", "provider:aws"), Order
 				fmt.Sprintf("architecture should be either %s or %s", config.ArchitectureAmd64, config.ArchitectureArm64),
 			)
 
-			aws.PopulateEnvVars(testingConfig.Architecture)
+			aws.PopulateStandaloneEnvVars(testingConfig)
 
 			templateBy(sdTemplateType, fmt.Sprintf("creating a ClusterDeployment %s with template %s", sdName, sdTemplate))
 
@@ -207,7 +197,7 @@ var _ = Describe("AWS Templates", Label("provider:cloud", "provider:aws"), Order
 			}
 
 			if !testingConfig.Upgrade && testingConfig.Hosted == nil {
-				continue
+				return
 			}
 
 			standaloneClient := kc.NewFromCluster(context.Background(), internalutils.DefaultSystemNamespace, sdName)
@@ -272,10 +262,8 @@ var _ = Describe("AWS Templates", Label("provider:cloud", "provider:aws"), Order
 					fmt.Sprintf("architecture should be either %s or %s", config.ArchitectureAmd64, config.ArchitectureArm64),
 				)
 
-				aws.PopulateEnvVars(testingConfig.Hosted.Architecture)
-
 				// Populate the environment variables required for the hosted cluster.
-				aws.PopulateHostedTemplateVars(context.Background(), kc, sdName)
+				aws.PopulateHostedTemplateVars(context.Background(), kc, testingConfig.Hosted.Architecture, sdName)
 
 				hdName = clusterdeployment.GenerateClusterName(fmt.Sprintf("aws-hosted-%d", i))
 				hdTemplate := testingConfig.Hosted.Template
@@ -356,6 +344,6 @@ var _ = Describe("AWS Templates", Label("provider:cloud", "provider:aws"), Order
 					return deploymentValidator.Validate(context.Background(), standaloneClient)
 				}).WithTimeout(30 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 			}
-		}
-	})
+		})
+	}
 })
