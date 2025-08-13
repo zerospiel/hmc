@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"slices"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -47,39 +46,22 @@ var _ = Context("Azure Templates", Label("provider:cloud", "provider:azure"), Or
 	)
 
 	BeforeAll(func() {
-		By("Get testing configuration")
-		providerConfigs := config.Config[config.TestingProviderAzure]
-
 		By("Ensuring that env vars are set correctly")
 		azure.CheckEnv()
 
 		By("Creating kube client")
 		kc = kubeclient.NewFromLocal(internalutils.DefaultSystemNamespace)
-
-		By("Providing cluster identity and credentials")
-		if slices.ContainsFunc(providerConfigs, func(providerConfig config.ProviderTestingConfig) bool {
-			return templates.GetType(providerConfig.Template) == templates.TemplateAzureAKS
-		}) {
-			credential.Apply("", "aks")
-		}
-
-		if slices.ContainsFunc(providerConfigs, func(providerConfig config.ProviderTestingConfig) bool {
-			return templates.GetType(providerConfig.Template) == templates.TemplateAzureStandaloneCP ||
-				templates.GetType(providerConfig.Template) == templates.TemplateAzureHostedCP
-		}) {
-			credential.Apply("", "azure")
-		}
 	})
 
 	AfterAll(func() {
 		// If we failed collect the support bundle before the cleanup
 		if CurrentSpecReport().Failed() && cleanup() {
 			By("collecting the support bundle from the management cluster")
-			logs.SupportBundle("")
+			logs.SupportBundle(kc, "")
 
 			for _, clusterName := range standaloneClusters {
 				By(fmt.Sprintf("collecting the support bundle from the %s cluster", clusterName))
-				logs.SupportBundle(clusterName)
+				logs.SupportBundle(kc, clusterName)
 			}
 		}
 
@@ -105,6 +87,13 @@ var _ = Context("Azure Templates", Label("provider:cloud", "provider:azure"), Or
 			sdName := clusterdeployment.GenerateClusterName(fmt.Sprintf("azure-%d", i))
 			sdTemplate := testingConfig.Template
 			sdTemplateType := templates.GetType(sdTemplate)
+
+			By("Providing cluster identity and credentials")
+			provider := "azure"
+			if sdTemplateType == templates.TemplateAzureAKS {
+				provider = "aks"
+			}
+			credential.Apply("", provider)
 
 			// Supported architectures for Azure standalone deployment: amd64, arm64
 			Expect(testingConfig.Architecture).To(SatisfyAny(
@@ -160,13 +149,14 @@ var _ = Context("Azure Templates", Label("provider:cloud", "provider:azure"), Or
 				// setup environment variables for deploying the hosted template (subnet name, etc)
 				azure.SetAzureEnvironmentVariables(sdName, kc)
 
-				kubeCfgPath, _, kubecfgDeleteFunc := kc.WriteKubeconfig(context.Background(), sdName)
+				kubeCfgPath, _, kubecfgDeleteFunc, err := kc.WriteKubeconfig(context.Background(), sdName)
+				Expect(err).To(Succeed())
 				kubeconfigDeleteFuncs = append(kubeconfigDeleteFuncs, kubecfgDeleteFunc)
 
 				By("Deploy onto standalone cluster")
 				GinkgoT().Setenv("KUBECONFIG", kubeCfgPath)
 				cmd := exec.Command("make", "test-apply")
-				_, err := utils.Run(cmd)
+				_, err = utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(os.Unsetenv("KUBECONFIG")).To(Succeed())
 
