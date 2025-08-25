@@ -96,10 +96,10 @@ type Service struct {
 	// Name is the chart release.
 	Name string `json:"name"`
 	// Namespace is the namespace the release will be installed in.
-	// It will default to Name if not provided.
+	// It will default to "default" if not provided.
 	Namespace string `json:"namespace,omitempty"`
 	// ValuesFrom can reference a ConfigMap or Secret containing helm values.
-	ValuesFrom []addoncontrollerv1beta1.ValueFrom `json:"valuesFrom,omitempty"`
+	ValuesFrom []ValuesFrom `json:"valuesFrom,omitempty"`
 	// Disable can be set to disable handling of this service.
 	Disable bool `json:"disable,omitempty"`
 }
@@ -110,12 +110,17 @@ type ServiceSpec struct {
 	// +kubebuilder:validation:Enum:=OneTime;Continuous;ContinuousWithDriftDetection;DryRun
 
 	// SyncMode specifies how services are synced in the target cluster.
+	// Deprecated: use .provider.config field to define provider-specific configuration.
 	SyncMode string `json:"syncMode,omitempty"`
+	// Provider is the definition of the provider to use to deploy services.
+	Provider StateManagementProviderConfig `json:"provider,omitempty"`
 	// Services is a list of services created via ServiceTemplates
 	// that could be installed on the target cluster.
 	Services []Service `json:"services,omitempty"`
+
 	// TemplateResourceRefs is a list of resources to collect from the management cluster,
 	// the values from which can be used in templates.
+	// Deprecated: use .provider.config field to define provider-specific configuration.
 	TemplateResourceRefs []addoncontrollerv1beta1.TemplateResourceRef `json:"templateResourceRefs,omitempty"`
 
 	// +listType=atomic
@@ -125,10 +130,15 @@ type ServiceSpec struct {
 	// The values contained in those resources can be static or leverage Go templates for dynamic customization.
 	// When expressed as templates, the values are filled in using information from
 	// resources within the management cluster before deployment (Cluster and TemplateResourceRefs)
+	// Deprecated: use .provider.config field to define provider-specific configuration.
 	PolicyRefs []addoncontrollerv1beta1.PolicyRef `json:"policyRefs,omitempty"`
+
 	// DriftIgnore specifies resources to ignore for drift detection.
+	// Deprecated: use .provider.config field to define provider-specific configuration.
 	DriftIgnore []libsveltosv1beta1.PatchSelector `json:"driftIgnore,omitempty"`
+
 	// DriftExclusions specifies specific configurations of resources to ignore for drift detection.
+	// Deprecated: use .provider.config field to define provider-specific configuration.
 	DriftExclusions []addoncontrollerv1beta1.DriftExclusion `json:"driftExclusions,omitempty"`
 
 	// +kubebuilder:default:=100
@@ -139,6 +149,7 @@ type ServiceSpec struct {
 	// Higher value means higher priority and lower means lower.
 	// In case of conflict with another object managing the service,
 	// the one with higher priority will get to deploy its services.
+	// Deprecated: use .provider.config field to define provider-specific configuration.
 	Priority int32 `json:"priority,omitempty"`
 
 	// +kubebuilder:default:=false
@@ -147,13 +158,17 @@ type ServiceSpec struct {
 	// E.g. If another object is already managing a service.
 	// By default the remaining services will be deployed even if conflict is detected.
 	// If set to true, the deployment will stop after encountering the first conflict.
+	// Deprecated: use .provider.config field to define provider-specific configuration.
 	StopOnConflict bool `json:"stopOnConflict,omitempty"`
+
 	// Reload instances via rolling upgrade when a ConfigMap/Secret mounted as volume is modified.
+	// Deprecated: use .provider.config field to define provider-specific configuration.
 	Reload bool `json:"reload,omitempty"`
 
 	// +kubebuilder:default:=false
 
 	// ContinueOnError specifies if the services deployment should continue if an error occurs.
+	// Deprecated: use .provider.config field to define provider-specific configuration.
 	ContinueOnError bool `json:"continueOnError,omitempty"`
 }
 
@@ -183,7 +198,7 @@ type ServiceStatus struct {
 // MultiClusterServiceStatus defines the observed state of MultiClusterService.
 type MultiClusterServiceStatus struct {
 	// Services contains details for the state of services.
-	Services []ServiceStatus `json:"services,omitempty"`
+	Services []ServiceState `json:"services,omitempty"`
 	// ServicesUpgradePaths contains details for the state of services upgrade paths.
 	ServicesUpgradePaths []ServiceUpgradePaths `json:"servicesUpgradePaths,omitempty"`
 	// +patchMergeKey=type
