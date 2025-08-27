@@ -578,20 +578,20 @@ self.status.availableReplicas == self.status.readyReplicas`,
 
 	err := r.Client.Get(ctx, client.ObjectKeyFromObject(stateManagementProvider), stateManagementProvider)
 	if client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("failed to get %s StateManagementProvider object: %w", utils.DefaultStateManagementProvider, err)
+		return fmt.Errorf("failed to get %s StateManagementProvider object: %w", stateManagementProvider.GetName(), err)
 	}
 	if err == nil {
 		return nil
 	}
 
 	if err = r.Client.Create(ctx, stateManagementProvider); err != nil {
-		err = fmt.Errorf("failed to create %s StateManagementProvider object: %w", utils.DefaultStateManagementProvider, err)
+		err = fmt.Errorf("failed to create %s StateManagementProvider object: %w", stateManagementProvider.GetName(), err)
 		r.warnf(mgmt, "StateManagementProviderCreateFailed", err.Error())
 		return err
 	}
 
 	l.Info("Successfully created StateManagementProvider object")
-	r.eventf(mgmt, "StateManagementProviderCreated", "Created %s StateManagementProvider object", utils.DefaultStateManagementProvider)
+	r.eventf(mgmt, "StateManagementProviderCreated", "Created %s StateManagementProvider object", stateManagementProvider.GetName())
 	return nil
 }
 
