@@ -49,15 +49,35 @@ import (
 	kcmv1 "github.com/K0rdent/kcm/api/v1beta1"
 	"github.com/K0rdent/kcm/internal/build"
 	"github.com/K0rdent/kcm/internal/controller"
+	"github.com/K0rdent/kcm/internal/controller/adapters/sveltos"
 	"github.com/K0rdent/kcm/internal/controller/ipam"
 	"github.com/K0rdent/kcm/internal/controller/statemanagementprovider"
-	"github.com/K0rdent/kcm/internal/controller/sveltos"
 	"github.com/K0rdent/kcm/internal/helm"
 	"github.com/K0rdent/kcm/internal/record"
 	"github.com/K0rdent/kcm/internal/telemetry"
 	"github.com/K0rdent/kcm/internal/utils"
 	kcmwebhook "github.com/K0rdent/kcm/internal/webhook"
 )
+
+type config struct {
+	templatesRepoURL              string
+	determinedRepositoryType      string
+	registryCredentialsSecretName string
+	registryCertSecretName        string
+	globalRegistry                string
+	globalK0sURL                  string
+	k0sURLCertSecretName          string
+	kcmTemplatesChartName         string
+	createManagement              bool
+	insecureRegistry              bool
+	createAccessManagement        bool
+	enableWebhook                 bool
+	createRelease                 bool
+	createTemplates               bool
+	enableSveltosCtrl             bool
+	enableSveltosExpireCtrl       bool
+	defaultHelmTimeout            time.Duration
+}
 
 var (
 	scheme   = runtime.NewScheme()
@@ -79,8 +99,6 @@ func init() {
 	utilruntime.Must(kcmv1.AddToScheme(scheme))
 	utilruntime.Must(sourcev1.AddToScheme(scheme))
 	utilruntime.Must(helmcontrollerv2.AddToScheme(scheme))
-	utilruntime.Must(addoncontrollerv1beta1.AddToScheme(scheme))
-	utilruntime.Must(libsveltosv1beta1.AddToScheme(scheme))
 	utilruntime.Must(ipamv1.AddToScheme(scheme))
 	utilruntime.Must(capioperatorv1.AddToScheme(scheme)) // required only for the mgmt status updates
 	utilruntime.Must(clusterapiv1.AddToScheme(scheme))
@@ -115,6 +133,7 @@ func main() {
 		pprofBindAddress              string
 		leaderElectionNamespace       string
 		enableSveltosCtrl             bool
+		enableSveltosExpireCtrl       bool
 		defaultHelmTimeout            time.Duration
 	)
 
@@ -151,7 +170,8 @@ func main() {
 	flag.StringVar(&webhookCertDir, "webhook-cert-dir", "/tmp/k8s-webhook-server/serving-certs/",
 		"Webhook cert dir, only used when webhook-port is specified.")
 	flag.StringVar(&pprofBindAddress, "pprof-bind-address", "", "The TCP address that the controller should bind to for serving pprof, \"0\" or empty value disables pprof")
-	flag.BoolVar(&enableSveltosCtrl, "enable-sveltos-expire-ctrl", false, "Enable SveltosCluster stuck (expired) tokens controller")
+	flag.BoolVar(&enableSveltosCtrl, "enable-sveltos-ctrl", true, "Enable Sveltos built-in provider controller")
+	flag.BoolVar(&enableSveltosExpireCtrl, "enable-sveltos-expire-ctrl", false, "Enable SveltosCluster stuck (expired) tokens controller")
 	flag.DurationVar(&defaultHelmTimeout, "default-helm-timeout", 0, "Specifies the timeout duration for Helm install or upgrade operations. If unset, Flux’s default value will be used")
 
 	opts := zap.Options{
@@ -255,103 +275,6 @@ func main() {
 
 	currentNamespace := utils.CurrentNamespace()
 
-	templateReconciler := controller.TemplateReconciler{
-		Client:           mgr.GetClient(),
-		CreateManagement: createManagement,
-		SystemNamespace:  currentNamespace,
-		DefaultRegistryConfig: helm.DefaultRegistryConfig{
-			URL:                   templatesRepoURL,
-			RepoType:              determinedRepositoryType,
-			CredentialsSecretName: registryCredentialsSecretName,
-			CertSecretName:        registryCertSecretName,
-			Insecure:              insecureRegistry,
-		},
-	}
-
-	if err = (&statemanagementprovider.Reconciler{
-		Client:          mgr.GetClient(),
-		SystemNamespace: currentNamespace,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "StateManagementProvider")
-		os.Exit(1)
-	}
-	if err = (&controller.ClusterTemplateReconciler{
-		TemplateReconciler: templateReconciler,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ClusterTemplate")
-		os.Exit(1)
-	}
-	if err = (&controller.ServiceTemplateReconciler{
-		TemplateReconciler: templateReconciler,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ServiceTemplate")
-		os.Exit(1)
-	}
-	if err = (&controller.ProviderTemplateReconciler{
-		TemplateReconciler: templateReconciler,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ProviderTemplate")
-		os.Exit(1)
-	}
-	if err = (&controller.ManagementReconciler{
-		SystemNamespace:        currentNamespace,
-		CreateAccessManagement: createAccessManagement,
-		IsDisabledValidationWH: !enableWebhook,
-		GlobalRegistry:         globalRegistry,
-		GlobalK0sURL:           globalK0sURL,
-		K0sURLCertSecretName:   k0sURLCertSecretName,
-		RegistryCertSecretName: registryCertSecretName,
-		DefaultHelmTimeout:     defaultHelmTimeout,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Management")
-		os.Exit(1)
-	}
-	if err = (&controller.AccessManagementReconciler{
-		Client:          mgr.GetClient(),
-		SystemNamespace: currentNamespace,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AccessManagement")
-		os.Exit(1)
-	}
-
-	templateChainReconciler := controller.TemplateChainReconciler{
-		Client:          mgr.GetClient(),
-		SystemNamespace: currentNamespace,
-	}
-	if err = (&controller.ClusterTemplateChainReconciler{
-		TemplateChainReconciler: templateChainReconciler,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ClusterTemplateChain")
-		os.Exit(1)
-	}
-	if err = (&controller.ServiceTemplateChainReconciler{
-		TemplateChainReconciler: templateChainReconciler,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ServiceTemplateChain")
-		os.Exit(1)
-	}
-
-	if err = (&controller.ReleaseReconciler{
-		Client:                mgr.GetClient(),
-		Config:                mgr.GetConfig(),
-		CreateManagement:      createManagement,
-		CreateRelease:         createRelease,
-		CreateTemplates:       createTemplates,
-		KCMTemplatesChartName: kcmTemplatesChartName,
-		SystemNamespace:       currentNamespace,
-		DefaultRegistryConfig: helm.DefaultRegistryConfig{
-			URL:                   templatesRepoURL,
-			RepoType:              determinedRepositoryType,
-			CredentialsSecretName: registryCredentialsSecretName,
-			CertSecretName:        registryCertSecretName,
-			Insecure:              insecureRegistry,
-		},
-		DefaultHelmTimeout: defaultHelmTimeout,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Release")
-		os.Exit(1)
-	}
-
 	if !enableTelemetry {
 		telemetryCfg.Mode = telemetry.ModeDisabled
 	}
@@ -366,48 +289,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controller.CredentialReconciler{
-		SystemNamespace: currentNamespace,
-		Client:          mgr.GetClient(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Credential")
-		os.Exit(1)
+	cfg := config{
+		createManagement:              createManagement,
+		templatesRepoURL:              templatesRepoURL,
+		determinedRepositoryType:      determinedRepositoryType,
+		registryCredentialsSecretName: registryCredentialsSecretName,
+		registryCertSecretName:        registryCertSecretName,
+		insecureRegistry:              insecureRegistry,
+		createAccessManagement:        createAccessManagement,
+		enableWebhook:                 enableWebhook,
+		globalRegistry:                globalRegistry,
+		globalK0sURL:                  globalK0sURL,
+		k0sURLCertSecretName:          k0sURLCertSecretName,
+		createRelease:                 createRelease,
+		createTemplates:               createTemplates,
+		kcmTemplatesChartName:         kcmTemplatesChartName,
+		enableSveltosCtrl:             enableSveltosCtrl,
+		enableSveltosExpireCtrl:       enableSveltosExpireCtrl,
+		defaultHelmTimeout:            defaultHelmTimeout,
 	}
-
-	if err = (&controller.ManagementBackupReconciler{
-		Client:          mgr.GetClient(),
-		SystemNamespace: currentNamespace,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ManagementBackup")
+	if err := setupControllers(mgr, currentNamespace, cfg); err != nil {
+		setupLog.Error(err, "failed to setup controllers")
 		os.Exit(1)
-	}
-	if err = (&controller.ProviderInterfaceReconciler{
-		Client: mgr.GetClient(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ProviderInterface")
-		os.Exit(1)
-	}
-
-	if err = (&ipam.ClusterIPAMClaimReconciler{
-		Client: mgr.GetClient(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ClusterIPAMClaim")
-		os.Exit(1)
-	}
-	if err = (&ipam.ClusterIPAMReconciler{
-		Client: mgr.GetClient(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ClusterIPAM")
-		os.Exit(1)
-	}
-
-	if enableSveltosCtrl {
-		if err = (&sveltos.ClusterReconciler{
-			Client: mgr.GetClient(),
-		}).SetupWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create controller", "controller", "SveltosCluster")
-			os.Exit(1)
-		}
 	}
 
 	// +kubebuilder:scaffold:builder
@@ -433,6 +336,170 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+func setupControllers(mgr ctrl.Manager, currentNamespace string, cfg config) error {
+	var err error
+	templateReconciler := controller.TemplateReconciler{
+		Client:           mgr.GetClient(),
+		CreateManagement: cfg.createManagement,
+		SystemNamespace:  currentNamespace,
+		DefaultRegistryConfig: helm.DefaultRegistryConfig{
+			URL:                   cfg.templatesRepoURL,
+			RepoType:              cfg.determinedRepositoryType,
+			CredentialsSecretName: cfg.registryCredentialsSecretName,
+			CertSecretName:        cfg.registryCertSecretName,
+			Insecure:              cfg.insecureRegistry,
+		},
+	}
+
+	if err = (&statemanagementprovider.Reconciler{
+		Client:          mgr.GetClient(),
+		SystemNamespace: currentNamespace,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "StateManagementProvider")
+		return err
+	}
+	if err = (&controller.ClusterTemplateReconciler{
+		TemplateReconciler: templateReconciler,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ClusterTemplate")
+		return err
+	}
+	if err = (&controller.ServiceTemplateReconciler{
+		TemplateReconciler: templateReconciler,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ServiceTemplate")
+		return err
+	}
+	if err = (&controller.ProviderTemplateReconciler{
+		TemplateReconciler: templateReconciler,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ProviderTemplate")
+		return err
+	}
+	if err = (&controller.ManagementReconciler{
+		SystemNamespace:        currentNamespace,
+		CreateAccessManagement: cfg.createAccessManagement,
+		IsDisabledValidationWH: !cfg.enableWebhook,
+		GlobalRegistry:         cfg.globalRegistry,
+		GlobalK0sURL:           cfg.globalK0sURL,
+		K0sURLCertSecretName:   cfg.k0sURLCertSecretName,
+		RegistryCertSecretName: cfg.registryCertSecretName,
+		DefaultHelmTimeout:     cfg.defaultHelmTimeout,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Management")
+		return err
+	}
+	if err = (&controller.AccessManagementReconciler{
+		Client:          mgr.GetClient(),
+		SystemNamespace: currentNamespace,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AccessManagement")
+		return err
+	}
+
+	templateChainReconciler := controller.TemplateChainReconciler{
+		Client:          mgr.GetClient(),
+		SystemNamespace: currentNamespace,
+	}
+	if err = (&controller.ClusterTemplateChainReconciler{
+		TemplateChainReconciler: templateChainReconciler,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ClusterTemplateChain")
+		return err
+	}
+	if err = (&controller.ServiceTemplateChainReconciler{
+		TemplateChainReconciler: templateChainReconciler,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ServiceTemplateChain")
+		return err
+	}
+
+	if err = (&controller.ReleaseReconciler{
+		Client:                mgr.GetClient(),
+		Config:                mgr.GetConfig(),
+		CreateManagement:      cfg.createManagement,
+		CreateRelease:         cfg.createRelease,
+		CreateTemplates:       cfg.createTemplates,
+		KCMTemplatesChartName: cfg.kcmTemplatesChartName,
+		SystemNamespace:       currentNamespace,
+		DefaultRegistryConfig: helm.DefaultRegistryConfig{
+			URL:                   cfg.templatesRepoURL,
+			RepoType:              cfg.determinedRepositoryType,
+			CredentialsSecretName: cfg.registryCredentialsSecretName,
+			CertSecretName:        cfg.registryCertSecretName,
+			Insecure:              cfg.insecureRegistry,
+		},
+		DefaultHelmTimeout: cfg.defaultHelmTimeout,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Release")
+		return err
+	}
+
+	if err = (&controller.CredentialReconciler{
+		SystemNamespace: currentNamespace,
+		Client:          mgr.GetClient(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Credential")
+		return err
+	}
+
+	if err = (&controller.ManagementBackupReconciler{
+		Client:          mgr.GetClient(),
+		SystemNamespace: currentNamespace,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ManagementBackup")
+		return err
+	}
+	if err = (&controller.ProviderInterfaceReconciler{
+		Client: mgr.GetClient(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ProviderInterface")
+		return err
+	}
+
+	if err = (&ipam.ClusterIPAMClaimReconciler{
+		Client: mgr.GetClient(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ClusterIPAMClaim")
+		return err
+	}
+	if err = (&ipam.ClusterIPAMReconciler{
+		Client: mgr.GetClient(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ClusterIPAM")
+		return err
+	}
+
+	if cfg.enableSveltosCtrl {
+		// we'll add sveltos types to the scheme only in case sveltos integration is enabled
+		setupLog.Info("adding sveltos types to the scheme")
+		utilruntime.Must(addoncontrollerv1beta1.AddToScheme(scheme))
+		utilruntime.Must(libsveltosv1beta1.AddToScheme(scheme))
+
+		deploymentName := os.Getenv("KCM_NAME")
+
+		setupLog.Info("setting up built-in ServiceSet controller")
+		if err = (&sveltos.ServiceSetReconciler{
+			AdapterName:      deploymentName,
+			AdapterNamespace: currentNamespace,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "ServiceSet")
+			return err
+		}
+		setupLog.Info("setup for ServiceSet controller successful")
+	}
+
+	if cfg.enableSveltosExpireCtrl {
+		if err = (&sveltos.ClusterReconciler{
+			Client: mgr.GetClient(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "SveltosCluster")
+			return err
+		}
+	}
+	return nil
 }
 
 func setupWebhooks(mgr ctrl.Manager, currentNamespace string, validateClusterUpgradePath bool) error {

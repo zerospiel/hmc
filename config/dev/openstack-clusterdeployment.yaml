@@ -26,6 +26,5 @@ spec:
         name: "public"
     authURL: ${OS_AUTH_URL}
     identityRef:
-      name: "openstack-cloud-config"
       cloudName: "openstack"
       region: ${OS_REGION_NAME}

@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kcmv1 "github.com/K0rdent/kcm/api/v1beta1"
+	"github.com/K0rdent/kcm/internal/utils"
 )
 
 type fakeHelmActor struct{}
@@ -371,6 +372,9 @@ var _ = Describe("ClusterDeployment Controller", func() {
 						Template:   clusterTemplate.Name,
 						Credential: awsCredential.Name,
 						ServiceSpec: kcmv1.ServiceSpec{
+							Provider: kcmv1.StateManagementProviderConfig{
+								Name: utils.DefaultStateManagementProvider,
+							},
 							Services: []kcmv1.Service{
 								{
 									Template: serviceTemplate.Name,
@@ -535,11 +539,6 @@ var _ = Describe("ClusterDeployment Controller", func() {
 								HaveField("Type", kcmv1.HelmReleaseReadyCondition),
 								HaveField("Status", metav1.ConditionTrue),
 								HaveField("Reason", helmcontrollerv2.InstallSucceededReason),
-							),
-							SatisfyAll(
-								HaveField("Type", kcmv1.SveltosProfileReadyCondition),
-								HaveField("Status", metav1.ConditionTrue),
-								HaveField("Reason", kcmv1.SucceededReason),
 							),
 							SatisfyAll(
 								HaveField("Type", kcmv1.CAPIClusterSummaryCondition),
