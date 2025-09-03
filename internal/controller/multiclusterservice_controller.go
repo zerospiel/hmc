@@ -27,7 +27,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -112,12 +112,16 @@ func (r *MultiClusterServiceReconciler) reconcileUpdate(ctx context.Context, mcs
 		// we need to explicitly requeue MultiClusterService object,
 		// otherwise we'll miss if some ClusterDeployment will be updated
 		// with matching labels.
-		if equality.Semantic.DeepEqual(clone.Status, mcs.Status) {
+		var requeue bool
+		if requeue, err = r.updateStatus(ctx, clone, mcs); requeue {
 			result = ctrl.Result{RequeueAfter: r.defaultRequeueTime}
-		} else {
-			err = r.updateStatus(ctx, mcs)
 		}
 	}()
+
+	l.V(1).Info("Cleaning up ServiceSets for ClusterDeployments that are no longer match")
+	if err = r.cleanup(ctx, mcs); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to reconcile cleanup: %w", err)
+	}
 
 	l.V(1).Info("Ensuring ServiceSets for matching ClusterDeployments")
 	selector, err := metav1.LabelSelectorAsSelector(&mcs.Spec.ClusterSelector)
@@ -137,14 +141,15 @@ func (r *MultiClusterServiceReconciler) reconcileUpdate(ctx context.Context, mcs
 		return ctrl.Result{}, fmt.Errorf("failed to list ClusterDeployments: %w", err)
 	}
 
-	l.V(1).Info("Matching ClusterDeployments listed", "count", len(clusters.Items))
+	l.V(1).Info("Matching ClusterDeployments found", "count", len(clusters.Items))
 	for _, cluster := range clusters.Items {
 		if !cluster.DeletionTimestamp.IsZero() {
 			continue
 		}
-		errs = errors.Join(r.createOrUpdateServiceSet(ctx, mcs, &cluster))
+		errs = errors.Join(errs, r.createOrUpdateServiceSet(ctx, mcs, &cluster))
 	}
 
+	errs = errors.Join(errs, r.setClustersCondition(ctx, mcs))
 	if errs != nil {
 		return result, errs
 	}
@@ -158,46 +163,66 @@ func (r *MultiClusterServiceReconciler) reconcileUpdate(ctx context.Context, mcs
 	return result, servicesErr
 }
 
-// updateStatus updates the status for the MultiClusterService object.
-func (r *MultiClusterServiceReconciler) updateStatus(ctx context.Context, mcs *kcmv1.MultiClusterService) error {
-	mcs.Status.ObservedGeneration = mcs.Generation
-	mcs.Status.Conditions = updateStatusConditions(mcs.Status.Conditions)
-
-	if err := r.Client.Status().Update(ctx, mcs); err != nil {
-		return fmt.Errorf("failed to update status for MultiClusterService %s/%s: %w", mcs.Namespace, mcs.Name, err)
+// setClustersCondition updates MultiClusterService's condition which shows number of clusters where services were
+// successfully deployed out of total number of matching clusters.
+func (r *MultiClusterServiceReconciler) setClustersCondition(ctx context.Context, mcs *kcmv1.MultiClusterService) error {
+	serviceSetList := new(kcmv1.ServiceSetList)
+	if err := r.Client.List(ctx, serviceSetList, client.MatchingFields{kcmv1.ServiceSetMultiClusterServiceIndexKey: mcs.Name}); err != nil {
+		return fmt.Errorf("failed to list ServiceSets for MultiClusterService %s: %w", client.ObjectKeyFromObject(mcs), err)
 	}
 
+	var totalDeployments, readyDeployments int
+
+	c := metav1.Condition{
+		Type:   kcmv1.ClusterInReadyStateCondition,
+		Status: metav1.ConditionTrue,
+		Reason: kcmv1.SucceededReason,
+	}
+
+	for _, serviceSet := range serviceSetList.Items {
+		// We won't count serviceSets being deleted neither in total deployments count
+		// nor in successful deployments count. If the serviceSet is being deleted, this
+		// means that either corresponding cluster is being deleted or corresponding cluster
+		// has labels which don't match selector anymore. Hence all services defined in
+		// the service set will be removed from cluster and there is no reason to count
+		// them anyhow.
+		if !serviceSet.DeletionTimestamp.IsZero() {
+			continue
+		}
+		totalDeployments++
+		if serviceSet.Status.Deployed {
+			readyDeployments++
+		}
+	}
+
+	if readyDeployments < totalDeployments {
+		c.Status = metav1.ConditionFalse
+		c.Reason = kcmv1.FailedReason
+	}
+
+	c.Message = fmt.Sprintf("%d/%d", readyDeployments, totalDeployments)
+	apimeta.SetStatusCondition(&mcs.Status.Conditions, c)
 	return nil
 }
 
-func getServicesReadinessCondition(serviceStatuses []kcmv1.ServiceState, desiredServices int) metav1.Condition {
-	ready := 0
-	for _, svcstatus := range serviceStatuses {
-		if svcstatus.State == kcmv1.ServiceStateDeployed {
-			ready++
-		}
+// updateStatus check whether status needs to be updated, if so updates the status for the MultiClusterService object
+// and returns a flag whether requeue should happen and an error.
+func (r *MultiClusterServiceReconciler) updateStatus(ctx context.Context, oldObj, newObj *kcmv1.MultiClusterService) (bool, error) {
+	// we'll requeue if no changes were applied to keep tracking ClusterDeployments
+	// which were created or updated.
+	if equality.Semantic.DeepEqual(oldObj.Status, newObj.Status) {
+		return true, nil
 	}
 
-	// NOTE: if desired < ready we still want to show this, because some of services might be in removal process
-	// WARN: at the moment complete service removal is not being handled at all
-	c := metav1.Condition{
-		Type:    kcmv1.ServicesInReadyStateCondition,
-		Status:  metav1.ConditionTrue,
-		Reason:  kcmv1.SucceededReason,
-		Message: fmt.Sprintf("%d/%d", ready, desiredServices),
-	}
-	if ready != desiredServices {
-		c.Reason = kcmv1.ProgressingReason
-		c.Status = metav1.ConditionFalse
-		// FIXME: remove the kludge after handling of services removal is done
-		if desiredServices < ready {
-			c.Reason = kcmv1.SucceededReason
-			c.Status = metav1.ConditionTrue
-			c.Message = fmt.Sprintf("%d/%d", ready, ready)
-		}
-	}
+	newObj.Status.ObservedGeneration = newObj.Generation
+	newObj.Status.Conditions = updateStatusConditions(newObj.Status.Conditions)
 
-	return c
+	// we'll requeue in case of successful status update due to existing GenerationChangePredicate.
+	// Otherwise we'll return an error.
+	if err := r.Client.Status().Update(ctx, newObj); err != nil {
+		return false, fmt.Errorf("failed to update status for MultiClusterService %s/%s: %w", newObj.Namespace, newObj.Name, err)
+	}
+	return true, nil
 }
 
 // updateStatusConditions evaluates all provided conditions and returns them
@@ -272,8 +297,7 @@ func (r *MultiClusterServiceReconciler) reconcileDelete(ctx context.Context, mcs
 	}()
 
 	serviceSets := new(kcmv1.ServiceSetList)
-	selector := fields.OneTermEqualSelector(kcmv1.ServiceSetMultiClusterServiceIndexKey, mcs.Name)
-	if err := r.Client.List(ctx, serviceSets, &client.ListOptions{FieldSelector: selector}); err != nil {
+	if err := r.Client.List(ctx, serviceSets, client.MatchingFields{kcmv1.ServiceSetMultiClusterServiceIndexKey: mcs.Name}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to list ServiceSets for MultiClusterService %s: %w", mcs.Name, err)
 	}
 	l.V(1).Info("Found ServiceSets", "count", len(serviceSets.Items))
@@ -455,4 +479,49 @@ func (r *MultiClusterServiceReconciler) createOrUpdateServiceSet(
 		return fmt.Errorf("failed to process ServiceSet %s: %w", serviceSetObjectKey.String(), err)
 	}
 	return nil
+}
+
+func (r *MultiClusterServiceReconciler) cleanup(ctx context.Context, mcs *kcmv1.MultiClusterService) error {
+	serviceSets := new(kcmv1.ServiceSetList)
+	// we'll list all ServiceSets which have .spec.multiClusterService defined and match
+	// current MultiClusterService object being reconciled
+	if err := r.Client.List(ctx, serviceSets, client.MatchingFields{kcmv1.ServiceSetMultiClusterServiceIndexKey: mcs.Name}); err != nil {
+		return fmt.Errorf("failed to list ServiceSets for MultiClusterService %s: %w", mcs.Name, err)
+	}
+
+	selector, err := metav1.LabelSelectorAsSelector(&mcs.Spec.ClusterSelector)
+	if err != nil {
+		return fmt.Errorf("failed to convert ClusterSelector to label selector: %w", err)
+	}
+
+	var errs error
+	for _, serviceSet := range serviceSets.Items {
+		// this will happen in case the corresponding ClusterDeployment was deleted,
+		// which triggered ServiceSet deletion as
+		if !serviceSet.DeletionTimestamp.IsZero() {
+			continue
+		}
+
+		// this is a self-management ServiceSet, skipping
+		if serviceSet.Spec.Cluster == "" {
+			continue
+		}
+
+		cd := new(kcmv1.ClusterDeployment)
+		key := client.ObjectKey{Namespace: serviceSet.Namespace, Name: serviceSet.Spec.Cluster}
+		if err := r.Client.Get(ctx, key, cd); err != nil {
+			return fmt.Errorf("failed to get ClusterDeployment %s: %w", key.String(), err)
+		}
+
+		// ClusterDeployment labels match selector, skipping
+		if selector.Matches(labels.Set(cd.Labels)) {
+			continue
+		}
+
+		// we want to delete serviceSet since clusterDeployment does not match selector anymore
+		if err := r.Client.Delete(ctx, &serviceSet); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("failed to delete ServiceSet %s: %w", key.String(), err))
+		}
+	}
+	return errs
 }
