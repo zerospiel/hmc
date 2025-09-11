@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"dario.cat/mergo"
 	"github.com/Masterminds/semver/v3"
 	fluxmeta "github.com/fluxcd/pkg/apis/meta"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -762,6 +763,18 @@ func helmChartFromSpecOrRef(
 		return helmChart, fmt.Errorf("unsupported HelmChart source kind %s", repoRef.String())
 	}
 
+	helmOptions := template.Spec.HelmOptions
+	if template.Spec.HelmOptions == nil {
+		helmOptions = &kcmv1.ServiceHelmOptions{}
+	}
+
+	if svc.HelmOptions != nil {
+		err = mergo.Merge(&helmOptions, svc.HelmOptions, mergo.WithAppendSlice)
+		if err != nil {
+			return addoncontrollerv1beta1.HelmChart{}, err
+		}
+	}
+
 	helmChart = addoncontrollerv1beta1.HelmChart{
 		Values:        svc.Values,
 		ValuesFrom:    convertValuesFrom(svc.ValuesFrom, namespace),
@@ -778,6 +791,7 @@ func helmChartFromSpecOrRef(
 			return svc.Name
 		}(),
 		RegistryCredentialsConfig: registryCredentialsConfig,
+		Options:                   convertHelmOptions(*helmOptions),
 	}
 	return helmChart, nil
 }
@@ -825,12 +839,25 @@ func helmChartFromFluxSource(
 	sanitizedPath := strings.TrimPrefix(strings.TrimPrefix(source.Path, "."), "/")
 	url := fmt.Sprintf("%s://%s/%s/%s", status.Kind, status.Namespace, status.Name, sanitizedPath)
 
+	helmOptions := template.Spec.HelmOptions
+	if template.Spec.HelmOptions == nil {
+		helmOptions = &kcmv1.ServiceHelmOptions{}
+	}
+
+	if svc.HelmOptions != nil {
+		err := mergo.Merge(&helmOptions, svc.HelmOptions, mergo.WithAppendSlice)
+		if err != nil {
+			return addoncontrollerv1beta1.HelmChart{}, err
+		}
+	}
+
 	helmChart = addoncontrollerv1beta1.HelmChart{
 		RepositoryURL:    url,
 		ReleaseName:      svc.Name,
 		ReleaseNamespace: svc.Namespace,
 		Values:           svc.Values,
 		ValuesFrom:       convertValuesFrom(svc.ValuesFrom, namespace),
+		Options:          convertHelmOptions(*helmOptions),
 	}
 
 	return helmChart, nil
@@ -958,6 +985,69 @@ func convertValuesFrom(src []kcmv1.ValuesFrom, namespace string) []addoncontroll
 		})
 	}
 	return valueFrom
+}
+
+func convertHelmOptions(options kcmv1.ServiceHelmOptions) *addoncontrollerv1beta1.HelmOptions {
+	toReturn := addoncontrollerv1beta1.HelmOptions{
+		Timeout: options.Timeout,
+	}
+
+	if options.SkipCRDs != nil {
+		toReturn.SkipCRDs = *options.SkipCRDs
+	}
+
+	if options.SkipSchemaValidation != nil {
+		toReturn.SkipSchemaValidation = *options.SkipSchemaValidation
+	}
+
+	if options.Wait != nil {
+		toReturn.Wait = *options.Wait
+	}
+
+	if options.CreateNamespace != nil {
+		toReturn.InstallOptions.CreateNamespace = *options.CreateNamespace
+	}
+
+	if options.WaitForJobs != nil {
+		toReturn.WaitForJobs = *options.WaitForJobs
+	}
+
+	if options.DisableHooks != nil {
+		toReturn.DisableHooks = *options.DisableHooks
+	}
+
+	if options.DisableOpenAPIValidation != nil {
+		toReturn.DisableOpenAPIValidation = *options.DisableOpenAPIValidation
+	}
+
+	if options.Atomic != nil {
+		toReturn.Atomic = *options.Atomic
+	}
+
+	if options.DependencyUpdate != nil {
+		toReturn.DependencyUpdate = *options.DependencyUpdate
+	}
+
+	if options.Labels != nil {
+		toReturn.Labels = *options.Labels
+	}
+
+	if options.EnableClientCache != nil {
+		toReturn.EnableClientCache = *options.EnableClientCache
+	}
+
+	if options.Description != nil {
+		toReturn.Description = *options.Description
+	}
+
+	if options.Replace != nil {
+		toReturn.InstallOptions.Replace = *options.Replace
+	}
+	if options.DisableHooks != nil {
+		toReturn.InstallOptions.DisableHooks = *options.DisableHooks
+	}
+
+	return &toReturn
 }
 
 // buildProfileSpec converts raw JSON configuration to [github.com/projectsveltos/addon-controller/api/v1beta1.Spec].

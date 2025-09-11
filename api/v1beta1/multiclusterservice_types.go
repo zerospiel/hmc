@@ -80,6 +80,9 @@ type Service struct {
 	// The string type is used in order to allow for templating.
 	Values string `json:"values,omitempty"`
 
+	// HelmOptions are the options to be passed to the provider for helm installation or updates
+	HelmOptions *ServiceHelmOptions `json:"helmOptions,omitempty"`
+
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 
@@ -102,6 +105,80 @@ type Service struct {
 	ValuesFrom []ValuesFrom `json:"valuesFrom,omitempty"`
 	// Disable can be set to disable handling of this service.
 	Disable bool `json:"disable,omitempty"`
+}
+
+type ServiceHelmOptions struct {
+	// +optional
+
+	// EnableClientCache is a flag to enable Helm client cache. If it is not specified, it will be set to false.
+	EnableClientCache *bool `json:"enableClientCache,omitempty"`
+
+	// +optional
+
+	// update dependencies if they are missing before installing the chart
+	DependencyUpdate *bool `json:"dependencyUpdate,omitempty"`
+	// +optional
+
+	// if set, will wait until all Pods, PVCs, Services, and minimum number of Pods of a Deployment, StatefulSet, or ReplicaSet
+	// are in a ready state before marking the release as successful. It will wait for as long as --timeout
+	Wait *bool `json:"wait,omitempty"`
+
+	// +optional
+
+	// if set and --wait enabled, will wait until all Jobs have been completed before marking the release as successful.
+	// It will wait for as long as --timeout
+	WaitForJobs *bool `json:"waitForJobs,omitempty"`
+
+	// +optional
+
+	CreateNamespace *bool `json:"createNamespace,omitempty"`
+
+	// +optional
+
+	// SkipCRDs controls whether CRDs should be installed during install/upgrade operation.
+	// By default, CRDs are installed if not already present.
+	SkipCRDs *bool `json:"skipCRDs,omitempty"`
+
+	// +optional
+
+	// if set, the installation process deletes the installation/upgrades on failure.
+	// The --wait flag will be set automatically if --atomic is used
+	Atomic *bool `json:"atomic,omitempty"`
+
+	// +optional
+
+	// prevent hooks from running during install/upgrade/uninstall
+	DisableHooks *bool `json:"disableHooks,omitempty"`
+
+	// +optional
+
+	// if set, the installation process will not validate rendered templates against the Kubernetes OpenAPI Schema
+	DisableOpenAPIValidation *bool `json:"disableOpenAPIValidation,omitempty"`
+
+	// +optional
+
+	// time to wait for any individual Kubernetes operation (like Jobs for hooks) (default 5m0s)
+	Timeout *metav1.Duration `json:"timeout,omitempty"`
+
+	// +optional
+
+	// SkipSchemaValidation determines if JSON schema validation is disabled.
+	SkipSchemaValidation *bool `json:"skipSchemaValidation,omitempty"`
+
+	// +optional
+
+	// Replaces if set indicates to replace an older release with this one
+	Replace *bool `json:"replace,omitempty"`
+
+	// +optional
+
+	// Labels that would be added to release metadata.
+	Labels *map[string]string `json:"labels,omitempty"`
+
+	// +optional
+
+	// Description is the description of an helm operation
+	Description *string `json:"description,omitempty"`
 }
 
 // ServiceSpec contains all the spec related to deployment of services.

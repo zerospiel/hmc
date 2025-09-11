@@ -160,11 +160,12 @@ func ServicesToDeploy(
 			serviceToDeploy = deployedServices[idx]
 		} else {
 			serviceToDeploy = kcmv1.ServiceWithValues{
-				Name:       s.Name,
-				Namespace:  svcNamespace,
-				Template:   s.Template,
-				Values:     s.Values,
-				ValuesFrom: s.ValuesFrom,
+				Name:        s.Name,
+				Namespace:   svcNamespace,
+				Template:    s.Template,
+				Values:      s.Values,
+				ValuesFrom:  s.ValuesFrom,
+				HelmOptions: s.HelmOptions,
 			}
 		}
 		services = append(services, serviceToDeploy)
@@ -273,11 +274,12 @@ func needsUpdate(serviceSet *kcmv1.ServiceSet, providerSpec kcmv1.StateManagemen
 			State:     kcmv1.ServiceStateDeployed,
 		}
 		desiredServicesMap[client.ObjectKey{Name: s.Name, Namespace: s.Namespace}] = kcmv1.ServiceWithValues{
-			Name:       s.Name,
-			Namespace:  s.Namespace,
-			Template:   s.Template,
-			Values:     s.Values,
-			ValuesFrom: s.ValuesFrom,
+			Name:        s.Name,
+			Namespace:   s.Namespace,
+			Template:    s.Template,
+			Values:      s.Values,
+			ValuesFrom:  s.ValuesFrom,
+			HelmOptions: s.HelmOptions,
 		}
 	}
 	// difference between observed and desired services state means that ServiceSet was not fully
@@ -291,11 +293,12 @@ func needsUpdate(serviceSet *kcmv1.ServiceSet, providerSpec kcmv1.StateManagemen
 	for _, s := range services {
 		svcNamespace := effectiveNamespace(s.Namespace)
 		clusterDeploymentServicesMap[client.ObjectKey{Name: s.Name, Namespace: svcNamespace}] = kcmv1.ServiceWithValues{
-			Name:       s.Name,
-			Namespace:  svcNamespace,
-			Template:   s.Template,
-			Values:     s.Values,
-			ValuesFrom: s.ValuesFrom,
+			Name:        s.Name,
+			Namespace:   svcNamespace,
+			Template:    s.Template,
+			Values:      s.Values,
+			ValuesFrom:  s.ValuesFrom,
+			HelmOptions: s.HelmOptions,
 		}
 	}
 	// difference between services defined in ClusterDeployment and ServiceSet means that ServiceSet needs to be updated.

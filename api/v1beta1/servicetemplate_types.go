@@ -42,6 +42,9 @@ const (
 
 // ServiceTemplateSpec defines the desired state of ServiceTemplate
 type ServiceTemplateSpec struct {
+	// HelmOptions are the global options to use when installing or updating the helm chart.
+	HelmOptions *ServiceHelmOptions `json:"helmOptions,omitempty"`
+
 	// Helm contains the Helm chart information for the template.
 	Helm *HelmSpec `json:"helm,omitempty"`
 
