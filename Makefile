@@ -88,9 +88,9 @@ generate-release: yq
 
 .PHONY: set-kcm-version
 set-kcm-version: yq
-	$(eval KCM_REGIONAL_VERSION := $(shell $(YQ) -r '.version' $(PROVIDER_TEMPLATES_DIR)/kcm-regional/Chart.yaml))
+	$(YQ) eval '.version = "$(VERSION)"' -i $(PROVIDER_TEMPLATES_DIR)/kcm-regional/Chart.yaml
 	$(YQ) eval -i \
-		'.version = "$(VERSION)" | (.dependencies[] | select(.name == "kcm-regional") | .version) = "$(KCM_REGIONAL_VERSION)"' \
+		'.version = "$(VERSION)" | (.dependencies[] | select(.name == "kcm-regional") | .version) = "$(VERSION)"' \
 		$(PROVIDER_TEMPLATES_DIR)/kcm/Chart.yaml
 	$(YQ) eval '.version = "$(VERSION)"' -i $(PROVIDER_TEMPLATES_DIR)/kcm-templates/Chart.yaml
 	$(YQ) eval '.image.tag = "$(VERSION)"' -i $(PROVIDER_TEMPLATES_DIR)/kcm/values.yaml
@@ -111,6 +111,11 @@ templates-generate:
 .PHONY: bump-chart-version
 bump-chart-version: yq
 	@YQ=$(YQ) $(SHELL) hack/chart-version.bash
+	$(eval KCM_VERSION := $(shell $(YQ) -r '.version' $(PROVIDER_TEMPLATES_DIR)/kcm/Chart.yaml)) \
+	$(YQ) eval '.version = "$(KCM_VERSION)"' -i $(PROVIDER_TEMPLATES_DIR)/kcm-regional/Chart.yaml
+	$(YQ) eval -i \
+		'(.dependencies[] | select(.name == "kcm-regional") | .version) = "$(KCM_VERSION)"' \
+		$(PROVIDER_TEMPLATES_DIR)/kcm/Chart.yaml
 
 .PHONY: update-release
 update-release: yq
@@ -463,13 +468,13 @@ dev-upgrade: generate-all dev-push dev-templates ## Upgrade dev environment and 
 	@$(KUBECTL) wait release "kcm-$(FQDN_VERSION)" --for='jsonpath={.status.ready}=true' --timeout 5m
 	@echo "Patching Management object to use Release: kcm-$(FQDN_VERSION)"
 	@$(KUBECTL) patch management kcm --type=merge -p '{"spec":{"release":"kcm-$(FQDN_VERSION)"}}'
+	@$(KUBECTL) rollout restart -n $(NAMESPACE) deployment/kcm-controller-manager
 	@echo "Sleeping 30s to allow Management status to update.."
 	@sleep 30
 	@echo "Waiting for Management object status.release to match kcm-$(FQDN_VERSION)..."
 	@$(KUBECTL) wait management kcm --for="jsonpath={.status.release}=kcm-$(FQDN_VERSION)" --timeout=10m
 	@echo "Waiting for Management object to become Ready..."
 	@$(KUBECTL) wait management kcm --for=condition=Ready=True --timeout 10m
-	@$(KUBECTL) rollout restart -n $(NAMESPACE) deployment/kcm-controller-manager
 
 PUBLIC_REPO ?= false
 
