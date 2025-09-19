@@ -29,7 +29,7 @@ const (
 	GenericComponentLabelValueKCM = "kcm"
 )
 
-// ManagementBackupSpec defines the desired state of ManagementBackup
+// ManagementBackupSpec defines the desired state of [ManagementBackup].
 type ManagementBackupSpec struct {
 	// StorageLocation is the name of a [github.com/vmware-tanzu/velero/pkg/apis/velero/v1.StorageLocation]
 	// where the backup should be stored.
@@ -43,8 +43,13 @@ type ManagementBackupSpec struct {
 	PerformOnManagementUpgrade bool `json:"performOnManagementUpgrade,omitempty"`
 }
 
-// ManagementBackupStatus defines the observed state of ManagementBackup
+// ManagementBackupStatus defines the observed state of [ManagementBackup].
 type ManagementBackupStatus struct {
+	LastBackups []ManagementBackupSingleStatus `json:"lastBackups,omitempty"`
+}
+
+// ManagementBackupSingleStatus defines the observed state of a single entry of [ManagementBackupStatus].
+type ManagementBackupSingleStatus struct {
 	// NextAttempt indicates the time when the next backup will be created.
 	// Always absent for a single [ManagementBackup].
 	NextAttempt *metav1.Time `json:"nextAttempt,omitempty"`
@@ -56,6 +61,11 @@ type ManagementBackupStatus struct {
 	LastBackupName string `json:"lastBackupName,omitempty"`
 	// Error stores messages in case of failed backup creation.
 	Error string `json:"error,omitempty"`
+	// Region reflects the name of a region for which
+	// the [github.com/vmware-tanzu/velero/pkg/apis/velero/v1.Backup] has been created.
+	//
+	// If absent, the backup is related to the
+	Region string `json:"region,omitempty"`
 }
 
 // IsSchedule checks if an instance of [ManagementBackup] is schedulable.
@@ -63,9 +73,14 @@ func (s *ManagementBackup) IsSchedule() bool {
 	return s.Spec.Schedule != ""
 }
 
-// IsCompleted checks if the latest underlaying backup has been completed.
+// IsCompleted checks if the latest underlaying backups have been completed.
 func (s *ManagementBackup) IsCompleted() bool {
-	return s.Status.LastBackup != nil && !s.Status.LastBackup.CompletionTimestamp.IsZero()
+	for _, lb := range s.Status.LastBackups {
+		if lb.LastBackup == nil || lb.LastBackup.CompletionTimestamp.IsZero() {
+			return false
+		}
+	}
+	return true
 }
 
 // TimestampedBackupName returns the backup name related to scheduled [ManagementBackup] based on the given timestamp.

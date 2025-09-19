@@ -63,7 +63,7 @@ func Test_getMostRecentProducedBackup(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			backups := generateVeleroBackups(t, scheduleName, now, 10, tc.genOpts...)
 
-			actualB, actualExists := getMostRecentProducedBackup(scheduleName, backups)
+			actualB, actualExists := getMostRecentlyProducedBackup(scheduleName, backups)
 			if tc.expectedExistsValue != actualExists {
 				t.Errorf("%s: actual '%v'; want: '%v'", tc.name, actualExists, tc.expectedExistsValue)
 			}

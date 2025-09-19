@@ -16,7 +16,6 @@ package backup
 
 import (
 	"context"
-	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -26,12 +25,11 @@ import (
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clusterapiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kcmv1 "github.com/K0rdent/kcm/api/v1beta1"
 )
 
-func getBackupTemplateSpec(ctx context.Context, cl client.Client) (*velerov1.BackupSpec, error) {
+func getBackupTemplateSpec(ctx context.Context, s *scope) *velerov1.BackupSpec {
 	bs := &velerov1.BackupSpec{
 		IncludedNamespaces: []string{"*"},
 		ExcludedResources:  []string{"clusters.cluster.x-k8s.io"},
@@ -45,41 +43,9 @@ func getBackupTemplateSpec(ctx context.Context, cl client.Client) (*velerov1.Bac
 		selector(clusterapiv1.ProviderNameLabel, "cluster-api"),
 	}
 
-	clusterTemplates := new(kcmv1.ClusterTemplateList)
-	if err := cl.List(ctx, clusterTemplates); err != nil {
-		return nil, fmt.Errorf("failed to list ClusterTemplates: %w", err)
-	}
+	bs.OrLabelSelectors = sortDedup(append(orSelectors, getClusterDeploymentsSelectors(ctx, s)...))
 
-	if len(clusterTemplates.Items) == 0 { // just collect child clusters names
-		cldSelectors, err := getClusterDeploymentsSelectors(ctx, cl, "")
-		if err != nil {
-			return nil, fmt.Errorf("failed to get selectors for all clusterdeployments: %w", err)
-		}
-
-		bs.OrLabelSelectors = sortDedup(append(orSelectors, cldSelectors...))
-
-		return bs, nil
-	}
-
-	for _, cltpl := range clusterTemplates.Items {
-		cldSelectors, err := getClusterDeploymentsSelectors(ctx, cl, cltpl.Name)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get selectors for clusterdeployments referencing %s clustertemplate: %w", client.ObjectKeyFromObject(&cltpl), err)
-		}
-
-		// add only enabled providers
-		if len(cldSelectors) > 0 {
-			for _, provider := range cltpl.Status.Providers {
-				orSelectors = append(orSelectors, selector(clusterapiv1.ProviderNameLabel, provider))
-			}
-		}
-
-		orSelectors = append(orSelectors, cldSelectors...)
-	}
-
-	bs.OrLabelSelectors = sortDedup(orSelectors)
-
-	return bs, nil
+	return bs
 }
 
 func sortDedup(selectors []*metav1.LabelSelector) []*metav1.LabelSelector {
@@ -110,24 +76,25 @@ func sortDedup(selectors []*metav1.LabelSelector) []*metav1.LabelSelector {
 	)
 }
 
-func getClusterDeploymentsSelectors(ctx context.Context, cl client.Client, clusterTemplateRef string) ([]*metav1.LabelSelector, error) {
-	cldeploys := new(kcmv1.ClusterDeploymentList)
-	opts := []client.ListOption{}
-	if clusterTemplateRef != "" {
-		opts = append(opts, client.MatchingFields{kcmv1.ClusterDeploymentTemplateIndexKey: clusterTemplateRef})
+func getClusterDeploymentsSelectors(ctx context.Context, s *scope) []*metav1.LabelSelector {
+	selectors := make([]*metav1.LabelSelector, 0, len(s.clientsByDeployment)*2)
+	// the deployments here are already either all or in-use
+	for _, v := range s.clientsByDeployment {
+		selectors = append(selectors,
+			selector(kcmv1.FluxHelmChartNameKey, v.cld.Name),
+			selector(clusterapiv1.ClusterNameLabel, v.cld.Name),
+		)
+
+		// check if template is in-use, and add an in-use provider selector
+		tpl := v.cld.Namespace + "/" + v.cld.Spec.Template
+		if cltpl, ok := s.clusterTemplates[tpl]; ok {
+			for _, provider := range cltpl.Status.Providers {
+				selectors = append(selectors, selector(clusterapiv1.ProviderNameLabel, provider))
+			}
+		}
 	}
 
-	if err := cl.List(ctx, cldeploys, opts...); err != nil {
-		return nil, fmt.Errorf("failed to list ClusterDeployments: %w", err)
-	}
-
-	selectors := make([]*metav1.LabelSelector, len(cldeploys.Items)*2)
-	for i, cldeploy := range cldeploys.Items {
-		selectors[i*2] = selector(kcmv1.FluxHelmChartNameKey, cldeploy.Name)
-		selectors[i*2+1] = selector(clusterapiv1.ClusterNameLabel, cldeploy.Name)
-	}
-
-	return selectors, nil
+	return selectors
 }
 
 func selector(k, v string) *metav1.LabelSelector {

@@ -34,7 +34,7 @@ import (
 	"github.com/K0rdent/kcm/internal/utils"
 )
 
-// scheduleMgmtNameLabel holds a reference to the [github.com/K0rdent/kcm/api/kcmv1.ManagementBackup] object name.
+// scheduleMgmtNameLabel holds a reference to the [github.com/K0rdent/kcm/api/v1beta1.ManagementBackup] object name.
 const scheduleMgmtNameLabel = "k0rdent.mirantis.com/management-backup"
 
 func (r *Reconciler) ReconcileBackup(ctx context.Context, mgmtBackup *kcmv1.ManagementBackup) (ctrl.Result, error) {
@@ -42,7 +42,13 @@ func (r *Reconciler) ReconcileBackup(ctx context.Context, mgmtBackup *kcmv1.Mana
 		return ctrl.Result{}, nil
 	}
 
-	if updated, err := utils.AddKCMComponentLabel(ctx, r.cl, mgmtBackup); updated || err != nil { // put all mgmtbackup to backup
+	s, err := getScope(ctx, r.mgmtCl, r.systemNamespace)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to construct backup scope: %w", err)
+	}
+	s.mgmtBackup = mgmtBackup
+
+	if updated, err := utils.AddKCMComponentLabel(ctx, r.mgmtCl, mgmtBackup); updated || err != nil { // put all mgmtbackup to backup
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to add component label: %w", err)
 		}
@@ -50,7 +56,7 @@ func (r *Reconciler) ReconcileBackup(ctx context.Context, mgmtBackup *kcmv1.Mana
 	}
 
 	if isRestored(mgmtBackup) {
-		return r.updateAfterRestoration(ctx, mgmtBackup)
+		return r.updateAfterRestoration(ctx, mgmtBackup, s)
 	}
 
 	if mgmtBackup.IsSchedule() { // schedule-creation path
@@ -73,7 +79,7 @@ func (r *Reconciler) ReconcileBackup(ctx context.Context, mgmtBackup *kcmv1.Mana
 		if !mgmtBackup.Status.NextAttempt.Equal(newNextAttemptTime) {
 			mgmtBackup.Status.NextAttempt = newNextAttemptTime
 
-			if err := r.cl.Status().Update(ctx, mgmtBackup); err != nil {
+			if err := r.mgmtCl.Status().Update(ctx, mgmtBackup); err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to update ManagementBackup %s status with next attempt time: %w", mgmtBackup.Name, err)
 			}
 		}
@@ -88,12 +94,15 @@ func (r *Reconciler) ReconcileBackup(ctx context.Context, mgmtBackup *kcmv1.Mana
 	l := ctrl.LoggerFrom(ctx)
 	l.V(1).Info("Collecting backup status")
 
+	// TODO: several backups
+
 	backupName := mgmtBackup.Name
 	if mgmtBackup.IsSchedule() {
 		backupName = mgmtBackup.Status.LastBackupName
 	}
 	veleroBackup := new(velerov1.Backup)
-	if err := r.cl.Get(ctx, client.ObjectKey{
+	// region TODO
+	if err := r.mgmtCl.Get(ctx, client.ObjectKey{
 		Name:      backupName,
 		Namespace: r.systemNamespace,
 	}, veleroBackup); err != nil {
@@ -102,79 +111,134 @@ func (r *Reconciler) ReconcileBackup(ctx context.Context, mgmtBackup *kcmv1.Mana
 
 	l.V(1).Info("Updating backup status")
 	mgmtBackup.Status.LastBackup = &veleroBackup.Status
-	if err := r.cl.Status().Update(ctx, mgmtBackup); err != nil {
+	if err := r.mgmtCl.Status().Update(ctx, mgmtBackup); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update ManagementBackup %s status: %w", mgmtBackup.Name, err)
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *Reconciler) updateAfterRestoration(ctx context.Context, mgmtBackup *kcmv1.ManagementBackup) (ctrl.Result, error) {
+func (r *Reconciler) updateAfterRestoration(ctx context.Context, s *scope) (ctrl.Result, error) {
+	mgmtBackup := &(*s.mgmtBackup) // shallow TODO
+
 	removeVeleroLabels := func() {
 		delete(mgmtBackup.Labels, velerov1.BackupNameLabel)
 		delete(mgmtBackup.Labels, velerov1.RestoreNameLabel)
 	}
 
-	l := ctrl.LoggerFrom(ctx).V(1)
+	ldebug := ctrl.LoggerFrom(ctx).V(1)
 
-	if mgmtBackup.Status.LastBackup != nil || mgmtBackup.Status.LastBackupName != "" || !mgmtBackup.Status.LastBackupTime.IsZero() { // fast-track
-		l.Info("Removing velero labels after restoration when status is already set")
+	// fast-track: if all backups have already been seen, we are done, hence just clean velero labels
+	shouldReturn := true
+	for _, lb := range mgmtBackup.Status.LastBackups {
+		if lb.LastBackup == nil && lb.LastBackupName == "" && lb.LastBackupTime.IsZero() {
+			shouldReturn = false
+			break
+		}
+	}
+	if shouldReturn {
+		ldebug.Info("Removing velero labels after restoration when status is already set")
 		removeVeleroLabels()
-		if err := r.cl.Update(ctx, mgmtBackup); err != nil {
+		// TODO: patch instead of update!
+		if err := r.mgmtCl.Update(ctx, mgmtBackup); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to update ManagementBackup labels after restoration: %w", err)
 		}
 
 		return ctrl.Result{}, nil
 	}
 
-	veleroBackups := new(velerov1.BackupList)
-	if err := r.cl.List(ctx, veleroBackups); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to list velero Backups: %w", err)
-	}
+	// TODO: problem with names if I had to change names of the VELERO backups
+	// mgmtName + region / mgmtName + region + timestamp
 
 	updateStatus := false
-	if mgmtBackup.IsSchedule() {
-		l.Info("Updating schedule after restoration")
-		lastBackup, ok := getMostRecentProducedBackup(mgmtBackup.Name, veleroBackups.Items)
-		if ok { // if have not found then there were no backups yet
-			l.Info("Found last backup", "last_backup_name", lastBackup.Name)
-			// next attempt will be fetched on the next event
-			mgmtBackup.Status.LastBackup = &lastBackup.Status
-			mgmtBackup.Status.LastBackupName = lastBackup.Name
-			mgmtBackup.Status.LastBackupTime = lastBackup.Status.StartTimestamp
-			updateStatus = true
-		} else {
-			l.Info("No last backup has been found")
+	seenMgmt := false
+	backupStatuses := make([]kcmv1.ManagementBackupSingleStatus, 0, len(s.clientsByDeployment))
+	// TODO: if mgmt (no region) -> consider only ONCE!
+
+	// TODO: concurrency
+	for _, deploy := range s.clientsByDeployment {
+		region := deploy.cld.Status.Region
+
+		// if mgmt has already been processed then skip the same work
+		if region == "" {
+			if seenMgmt {
+				continue
+			}
+
+			seenMgmt = true
 		}
-	} else {
-		l.Info("Updating single backup after restoration")
-		for _, v := range veleroBackups.Items {
-			if mgmtBackup.Name == v.Name {
-				mgmtBackup.Status.LastBackup = &v.Status
-				mgmtBackup.Status.LastBackupName = v.Name
-				mgmtBackup.Status.LastBackupTime = v.Status.StartTimestamp
+
+		// list backups in the corresponding cluster (region or mgmt)
+		veleroBackups := new(velerov1.BackupList)
+		if err := deploy.cl.List(ctx, veleroBackups); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to list velero Backups: %w", err)
+		}
+
+		if mgmtBackup.IsSchedule() {
+			ldebug.Info("Updating schedule after restoration", "region", region)
+			lastBackup, ok := getMostRecentlyProducedBackup(mgmtBackup.Name, veleroBackups.Items)
+			if ok { // if have not found then there were no backups yet
+				ldebug.Info("Found last backup", "last_backup_name", lastBackup.Name)
+
+				// next attempt will be fetched on the next event
+				mgmtBackup.Status.LastBackup = &lastBackup.Status
+				mgmtBackup.Status.LastBackupName = lastBackup.Name
+				mgmtBackup.Status.LastBackupTime = lastBackup.Status.StartTimestamp
 				updateStatus = true
-				break
+			} else {
+				ldebug.Info("No last backup has been found", "region", region)
+			}
+		} else {
+			ldebug.Info("Updating single backup after restoration", "region", region)
+
+			mgmtBackupName := mgmtBackup.Name
+			if region != "" {
+				mgmtBackupName = mgmtBackup.Name + "-" + region
+			}
+
+			for _, v := range veleroBackups.Items {
+				if mgmtBackupName == v.Name {
+					backupStatuses = append(backupStatuses, kcmv1.ManagementBackupSingleStatus{})
+					mgmtBackup.Status.LastBackup = &v.Status
+					mgmtBackup.Status.LastBackupName = v.Name
+					mgmtBackup.Status.LastBackupTime = v.Status.StartTimestamp
+					updateStatus = true
+					break
+				}
 			}
 		}
 	}
 
+	// TODO: here we have to produce several backups: mgmt + region(s);
+	// adjust names by region
+	// mgmt backup now have to have list of backups instead of a single
+
 	if updateStatus {
-		l.Info("Updating status after restoration")
-		if err := r.cl.Status().Update(ctx, mgmtBackup); err != nil {
+		ldebug.Info("Updating status after restoration")
+		if err := r.mgmtCl.Status().Update(ctx, mgmtBackup); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to update ManagementBackup status after restoration: %w", err)
 		}
 
 		return ctrl.Result{}, nil
 	}
 
-	l.Info("Removing velero labels after restoration without status set")
+	ldebug.Info("Removing velero labels after restoration without status set")
 	removeVeleroLabels()
-	if err := r.cl.Update(ctx, mgmtBackup); err != nil {
+	// TODO: consider patch
+	if err := r.mgmtCl.Update(ctx, mgmtBackup); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update ManagementBackup labels after restoration: %w", err)
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func TODOfindStatusBackup(mgmtBackup *kcmv1.ManagementBackup, name string, veleroBackups velerov1.BackupList) (kcmv1.ManagementBackupSingleStatus, bool) {
+	for _, v := range mgmtBackup.Status.LastBackups {
+		if v.LastBackupName == name {
+			return v, true
+		}
+	}
+	return kcmv1.ManagementBackupSingleStatus{}, false
 }
 
 func (r *Reconciler) createScheduleBackup(ctx context.Context, mgmtBackup *kcmv1.ManagementBackup, nextAttemptTime time.Time) (ctrl.Result, error) {
@@ -192,7 +256,7 @@ func (r *Reconciler) createScheduleBackup(ctx context.Context, mgmtBackup *kcmv1
 	mgmtBackup.Status.LastBackupTime = &metav1.Time{Time: now}
 	mgmtBackup.Status.NextAttempt = &metav1.Time{Time: nextAttemptTime}
 
-	if err := r.cl.Status().Update(ctx, mgmtBackup); err != nil {
+	if err := r.mgmtCl.Status().Update(ctx, mgmtBackup); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update ManagementBackup %s status: %w", mgmtBackup.Name, err)
 	}
 
@@ -210,7 +274,8 @@ func (r *Reconciler) createSingleBackup(ctx context.Context, mgmtBackup *kcmv1.M
 	mgmtBackup.Status.LastBackupName = mgmtBackup.Name
 	mgmtBackup.Status.LastBackupTime = &metav1.Time{Time: time.Now().UTC()}
 
-	if err := r.cl.Status().Update(ctx, mgmtBackup); err != nil {
+	// TODO mgmt
+	if err := r.mgmtCl.Status().Update(ctx, mgmtBackup); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update ManagementBackup %s status: %w", mgmtBackup.Name, err)
 	}
 
@@ -234,19 +299,17 @@ func withStorageLocation(loc string) createOpt {
 	}
 }
 
-func (r *Reconciler) createNewVeleroBackup(ctx context.Context, backupName string, createOpts ...createOpt) error {
+func (r *Reconciler) createNewVeleroBackup(ctx context.Context, backupName string, s *scope, createOpts ...createOpt) error {
 	l := ctrl.LoggerFrom(ctx)
 
-	veleroBackup, err := r.getNewVeleroBackup(ctx, backupName)
-	if err != nil {
-		return err
-	}
+	veleroBackup := r.getNewVeleroBackup(ctx, backupName, s)
 
 	for _, o := range createOpts {
 		o(veleroBackup)
 	}
 
-	if err := r.cl.Create(ctx, veleroBackup); client.IgnoreAlreadyExists(err) != nil { // avoid err-loop on status update error
+	// TODO region
+	if err := r.mgmtCl.Create(ctx, veleroBackup); client.IgnoreAlreadyExists(err) != nil { // avoid err-loop on status update error
 		return fmt.Errorf("failed to create velero Backup: %w", err)
 	}
 
@@ -254,13 +317,9 @@ func (r *Reconciler) createNewVeleroBackup(ctx context.Context, backupName strin
 	return nil
 }
 
-func (r *Reconciler) getNewVeleroBackup(ctx context.Context, backupName string) (*velerov1.Backup, error) {
-	templateSpec, err := getBackupTemplateSpec(ctx, r.cl)
-	if err != nil {
-		return nil, fmt.Errorf("failed to construct velero backup spec: %w", err)
-	}
-
-	veleroBackup := &velerov1.Backup{
+func (r *Reconciler) getNewVeleroBackup(ctx context.Context, backupName string, s *scope) *velerov1.Backup {
+	// TODO: name
+	return &velerov1.Backup{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: velerov1.SchemeGroupVersion.String(),
 			Kind:       "Backup",
@@ -269,15 +328,14 @@ func (r *Reconciler) getNewVeleroBackup(ctx context.Context, backupName string) 
 			Name:      backupName,
 			Namespace: r.systemNamespace,
 		},
-		Spec: *templateSpec,
+		Spec: *getBackupTemplateSpec(ctx, s),
 	}
-
-	return veleroBackup, nil
 }
 
 func (r *Reconciler) isVeleroBackupProgressing(ctx context.Context, schedule *kcmv1.ManagementBackup) bool {
 	backups := &velerov1.BackupList{}
-	if err := r.cl.List(ctx, backups, client.InNamespace(r.systemNamespace), client.MatchingLabels{scheduleMgmtNameLabel: schedule.Name}); err != nil {
+	// TODO region
+	if err := r.mgmtCl.List(ctx, backups, client.InNamespace(r.systemNamespace), client.MatchingLabels{scheduleMgmtNameLabel: schedule.Name}); err != nil {
 		return true
 	}
 
@@ -293,14 +351,14 @@ func (r *Reconciler) isVeleroBackupProgressing(ctx context.Context, schedule *kc
 
 func (r *Reconciler) propagateMetaError(ctx context.Context, mgmtBackup *kcmv1.ManagementBackup, errorMsg string) (ctrl.Result, error) {
 	mgmtBackup.Status.Error = "Probably Velero is not installed: " + errorMsg
-	if err := r.cl.Status().Update(ctx, mgmtBackup); err != nil {
+	if err := r.mgmtCl.Status().Update(ctx, mgmtBackup); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update ManagementBackup %s status: %w", mgmtBackup.Name, err)
 	}
 
 	return ctrl.Result{}, nil // no need to requeue if got such error
 }
 
-func getMostRecentProducedBackup(mgmtBackupName string, backups []velerov1.Backup) (*velerov1.Backup, bool) {
+func getMostRecentlyProducedBackup(mgmtBackupName string, backups []velerov1.Backup) (*velerov1.Backup, bool) {
 	if len(backups) == 0 {
 		return &velerov1.Backup{}, false
 	}
