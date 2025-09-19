@@ -118,6 +118,10 @@ type ClusterDeploymentStatus struct {
 	// this cluster can be upgraded. It can be an empty array, which means no upgrades are
 	// available.
 	AvailableUpgrades []string `json:"availableUpgrades,omitempty"`
+
+	// Region shows the region the [ClusterDeployment] targets.
+	Region string `json:"region,omitempty"`
+
 	// ObservedGeneration is the last observed generation.
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }

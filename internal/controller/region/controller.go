@@ -41,6 +41,7 @@ import (
 	"github.com/K0rdent/kcm/internal/controller/components"
 	"github.com/K0rdent/kcm/internal/record"
 	"github.com/K0rdent/kcm/internal/utils"
+	"github.com/K0rdent/kcm/internal/utils/kube"
 	"github.com/K0rdent/kcm/internal/utils/ratelimit"
 )
 
@@ -103,7 +104,7 @@ func (r *Reconciler) update(ctx context.Context, region *kcmv1.Region) (result c
 		err = errors.Join(err, r.updateStatus(ctx, region))
 	}()
 
-	kubeConfigRef, err := GetKubeConfigSecretRef(region)
+	kubeConfigRef, err := kube.GetRegionalKubeconfigSecretRef(region)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get kubeconfig secret reference: %w", err)
 	}
@@ -149,7 +150,7 @@ func (r *Reconciler) update(ctx context.Context, region *kcmv1.Region) (result c
 		},
 	}
 
-	rgnlClient, restCfg, err := GetClient(ctx, r.MgmtClient, r.SystemNamespace, region)
+	rgnlClient, restCfg, err := kube.GetRegionalClient(ctx, r.MgmtClient, r.SystemNamespace, region)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get clients for the %s region: %w", region.Name, err)
 	}
