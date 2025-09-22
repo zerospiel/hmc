@@ -17,6 +17,7 @@ package utils
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -125,13 +126,21 @@ func SetPredeclaredSecretsCondition(ctx context.Context, cl client.Client, base 
 }
 
 // CopySecret copies a Secret with the given key to the given namespace.
-func CopySecret(ctx context.Context, cl client.Client, key client.ObjectKey, toNamespace string) error {
-	if key.Name == "" || key.Namespace == toNamespace { // sanity check
+func CopySecret(
+	ctx context.Context,
+	sourceClient client.Client,
+	targetClient client.Client,
+	key client.ObjectKey,
+	toNamespace string,
+	owner client.Object,
+	extraLabels map[string]string,
+) error {
+	if key.Name == "" { // sanity check
 		return nil
 	}
 
 	secret := new(corev1.Secret)
-	if err := cl.Get(ctx, key, secret); err != nil {
+	if err := sourceClient.Get(ctx, key, secret); err != nil {
 		return fmt.Errorf("failed to get Secret %s: %w", key, err)
 	}
 
@@ -144,9 +153,20 @@ func CopySecret(ctx context.Context, cl client.Client, key client.ObjectKey, toN
 	newSecret.SetSelfLink("")
 	newSecret.SetUID("")
 
+	if owner != nil {
+		AddOwnerReference(newSecret, owner)
+	}
+
 	newSecret.SetNamespace(toNamespace)
 
-	if err := cl.Create(ctx, newSecret); client.IgnoreAlreadyExists(err) != nil {
+	if len(extraLabels) > 0 {
+		if newSecret.Labels == nil {
+			newSecret.Labels = make(map[string]string)
+		}
+		maps.Copy(newSecret.Labels, extraLabels)
+	}
+
+	if err := targetClient.Create(ctx, newSecret); client.IgnoreAlreadyExists(err) != nil {
 		return fmt.Errorf("failed to create Secret %s/%s: %w", newSecret.Namespace, newSecret.Name, err)
 	}
 

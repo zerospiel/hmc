@@ -344,6 +344,11 @@ func (r *ClusterDeploymentReconciler) updateCluster(
 		return ctrl.Result{}, err
 	}
 
+	if err = r.copyRegionalKubeConfigSecret(ctx, scope); err != nil {
+		r.warnf(cd, "KubeConfigSecretCopyFailed", "Failed to copy regional KubeConfig secret: %v", err)
+		return ctrl.Result{}, fmt.Errorf("failed to copy regional KubeConfig secret: %w", err)
+	}
+
 	hrReconcileOpts, err := r.getHelmReleaseReconcileOpts(clusterTpl, scope)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to get HelmRelease reconcile opts: %w", err)
@@ -392,6 +397,19 @@ func (r *ClusterDeploymentReconciler) updateCluster(
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *ClusterDeploymentReconciler) copyRegionalKubeConfigSecret(ctx context.Context, scope clusterScope) error {
+	cd := scope.cd
+	if scope.cred.Spec.Region == "" || scope.region == nil || cd.Namespace == r.SystemNamespace {
+		return nil
+	}
+
+	kubeConfigSecretRef, err := region.GetKubeConfigSecretRef(scope.region)
+	if err != nil {
+		return fmt.Errorf("failed to get kubeconfig secret reference: %w", err)
+	}
+	return utils.CopySecret(ctx, r.MgmtClient, r.MgmtClient, client.ObjectKey{Namespace: r.SystemNamespace, Name: kubeConfigSecretRef.Name}, cd.Namespace, scope.region, nil)
 }
 
 func (r *ClusterDeploymentReconciler) getHelmReleaseReconcileOpts(
@@ -1197,23 +1215,22 @@ func (r *ClusterDeploymentReconciler) handleCertificateSecrets(ctx context.Conte
 
 	l := ctrl.LoggerFrom(ctx).WithName("handle-secrets")
 
-	if _, err := utils.SetPredeclaredSecretsCondition(ctx, rgnClient, cd, record.Warnf, r.SystemNamespace, secretsToHandle...); err != nil {
-		l.Error(err, "failed to check if given Secrets exist")
-		return err
-	}
-
 	if cd.Namespace == r.SystemNamespace { // nothing to copy
 		return nil
 	}
 
 	l.V(1).Info("Copying certificate secrets from the system namespace to the ClusterDeployment namespace")
 	for _, secretName := range secretsToHandle {
-		if err := utils.CopySecret(ctx, rgnClient, client.ObjectKey{Namespace: r.SystemNamespace, Name: secretName}, cd.Namespace); err != nil {
+		if err := utils.CopySecret(ctx, r.MgmtClient, rgnClient, client.ObjectKey{Namespace: r.SystemNamespace, Name: secretName}, cd.Namespace, nil, nil); err != nil {
 			l.Error(err, "failed to copy Secret for the ClusterDeployment")
 			return err
 		}
 	}
 
+	if _, err := utils.SetPredeclaredSecretsCondition(ctx, rgnClient, cd, record.Warnf, cd.Namespace, secretsToHandle...); err != nil {
+		l.Error(err, "failed to check if given Secrets exist")
+		return err
+	}
 	return nil
 }
 
