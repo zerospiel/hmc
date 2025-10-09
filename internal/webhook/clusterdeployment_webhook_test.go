@@ -38,6 +38,11 @@ import (
 	"github.com/K0rdent/kcm/test/scheme"
 )
 
+const (
+	testSvcTemplate1Name = "test-servicetemplate-1"
+	testSystemNamespace  = "test-system-namespace"
+)
+
 var (
 	testTemplateName   = "template-test"
 	testCredentialName = "cred-test"
@@ -288,7 +293,7 @@ func TestClusterDeploymentValidateCreate(t *testing.T) {
 					}),
 				),
 			},
-			err: fmt.Sprintf("the ClusterDeployment is invalid: the ServiceTemplate %s/%s is invalid with the error: validation error example", metav1.NamespaceDefault, testSvcTemplate1Name),
+			err: fmt.Sprintf("the ClusterDeployment is invalid: some services have invalid templates\nthe ServiceTemplate %s/%s is invalid with the error: validation error example", metav1.NamespaceDefault, testSvcTemplate1Name),
 		},
 		{
 			name: "should succeed",
@@ -783,7 +788,7 @@ func TestClusterDeploymentValidateUpdate(t *testing.T) {
 					}),
 				),
 			},
-			err: fmt.Sprintf("the ClusterDeployment is invalid: the ServiceTemplate %s/%s is invalid with the error: validation error example", metav1.NamespaceDefault, testSvcTemplate1Name),
+			err: fmt.Sprintf("the ClusterDeployment is invalid: some services have invalid templates\nthe ServiceTemplate %s/%s is invalid with the error: validation error example", metav1.NamespaceDefault, testSvcTemplate1Name),
 		},
 	}
 	for _, tt := range tests {
