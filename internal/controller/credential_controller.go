@@ -28,11 +28,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	kcmv1 "github.com/K0rdent/kcm/api/v1beta1"
+	"github.com/K0rdent/kcm/internal/controller/credential"
 	"github.com/K0rdent/kcm/internal/record"
 	kubeutil "github.com/K0rdent/kcm/internal/util/kube"
 	labelsutil "github.com/K0rdent/kcm/internal/util/labels"
@@ -65,6 +67,25 @@ func (r *CredentialReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	if !cred.DeletionTimestamp.IsZero() {
+		l.Info("Deleting Credential")
+		return r.delete(ctx, cred)
+	}
+
+	return r.update(ctx, cred)
+}
+
+func (r *CredentialReconciler) update(ctx context.Context, cred *kcmv1.Credential) (ctrl.Result, error) {
+	l := ctrl.LoggerFrom(ctx)
+
+	if controllerutil.AddFinalizer(cred, kcmv1.CredentialFinalizer) {
+		if err := r.MgmtClient.Update(ctx, cred); err != nil {
+			l.Error(err, "failed to update Credential finalizers")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: r.syncPeriod}, nil
+	}
+
 	if updated, err := labelsutil.AddKCMComponentLabel(ctx, r.MgmtClient, cred); updated || err != nil {
 		if err != nil {
 			l.Error(err, "adding component label")
@@ -72,7 +93,9 @@ func (r *CredentialReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	var err error
 	defer func() {
+		r.setReadyCondition(cred, err)
 		err = errors.Join(err, r.updateStatus(ctx, cred))
 	}()
 
@@ -99,15 +122,12 @@ func (r *CredentialReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 		rgnClient, _, err = kubeutil.GetRegionalClient(ctx, r.MgmtClient, r.SystemNamespace, rgn, schemeutil.GetRegionalScheme)
 		if err != nil {
-			apimeta.SetStatusCondition(cred.GetConditions(), metav1.Condition{
-				Type:               kcmv1.CredentialReadyCondition,
-				Status:             metav1.ConditionFalse,
-				Reason:             kcmv1.FailedReason,
-				ObservedGeneration: cred.Generation,
-				Message:            err.Error(),
-			})
 			return ctrl.Result{}, err
 		}
+	}
+
+	if err = credential.CopyClusterIdentities(ctx, r.MgmtClient, rgnClient, cred, r.SystemNamespace); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	clIdty := &unstructured.Unstructured{}
@@ -151,6 +171,45 @@ func (r *CredentialReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return ctrl.Result{RequeueAfter: r.syncPeriod}, nil
 }
 
+func (r *CredentialReconciler) delete(ctx context.Context, cred *kcmv1.Credential) (ctrl.Result, error) {
+	l := ctrl.LoggerFrom(ctx)
+
+	rgnClient, err := kubeutil.GetRegionalClientByRegionName(ctx, r.MgmtClient, r.SystemNamespace, cred.Spec.Region, schemeutil.GetRegionalScheme)
+	if err == nil {
+		if err := credential.ReleaseClusterIdentities(ctx, rgnClient, cred); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to release all Cluster Identities for Credential %s: %w", client.ObjectKeyFromObject(cred), err)
+		}
+	} else {
+		// if the region is inaccessible, we can’t release ClusterIdentities remove the finalizer to proceed with cleanup
+		errMsg := fmt.Sprintf("failed to get regional client for Credential %s: %s", client.ObjectKeyFromObject(cred), err)
+		l.Info(errMsg)
+	}
+
+	r.eventf(cred, "RemovedCredential", "Credential has been removed")
+	l.Info("Removing Credential finalizer")
+	if controllerutil.RemoveFinalizer(cred, kcmv1.CredentialFinalizer) {
+		return ctrl.Result{}, r.MgmtClient.Update(ctx, cred)
+	}
+	return ctrl.Result{}, nil
+}
+
+// setReadyCondition updates the Credential resource's "Ready" condition
+func (*CredentialReconciler) setReadyCondition(cred *kcmv1.Credential, err error) {
+	readyCond := metav1.Condition{
+		Type:               kcmv1.CredentialReadyCondition,
+		ObservedGeneration: cred.Generation,
+		Status:             metav1.ConditionTrue,
+		Reason:             kcmv1.SucceededReason,
+		Message:            "Credential is ready",
+	}
+	if err != nil {
+		readyCond.Status = metav1.ConditionFalse
+		readyCond.Reason = kcmv1.FailedReason
+		readyCond.Message = err.Error()
+	}
+	apimeta.SetStatusCondition(&cred.Status.Conditions, readyCond)
+}
+
 func (r *CredentialReconciler) updateStatus(ctx context.Context, cred *kcmv1.Credential) error {
 	cred.Status.Ready = false
 	for _, cond := range cred.Status.Conditions {
@@ -163,8 +222,11 @@ func (r *CredentialReconciler) updateStatus(ctx context.Context, cred *kcmv1.Cre
 	if err := r.MgmtClient.Status().Update(ctx, cred); err != nil {
 		return fmt.Errorf("failed to update Credential %s/%s status: %w", cred.Namespace, cred.Name, err)
 	}
-
 	return nil
+}
+
+func (*CredentialReconciler) eventf(cred *kcmv1.Credential, reason, message string, args ...any) {
+	record.Eventf(cred, cred.Generation, reason, message, args...)
 }
 
 // SetupWithManager sets up the controller with the Manager.

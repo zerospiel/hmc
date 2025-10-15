@@ -20,6 +20,10 @@ rules:
     resources:
       - azureclusteridentities
     verbs:
+      - create
+      - delete
+      - patch
+      - update
       - get
       - list
       - watch

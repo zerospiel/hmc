@@ -22,6 +22,10 @@ rules:
       - awsclustercontrolleridentities
       - awsclusterroleidentities
     verbs:
+      - create
+      - delete
+      - patch
+      - update
       - get
       - list
       - watch
