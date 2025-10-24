@@ -519,8 +519,8 @@ func (r *ServiceSetReconciler) profileSpec(ctx context.Context, rgnClient client
 		clusterSelector = libsveltosv1beta1.Selector{
 			LabelSelector: metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					"k0rdent.mirantis.com/management-cluster": "true",
-					"sveltos-agent": "present",
+					kcmv1.K0rdentManagementClusterLabelKey: kcmv1.K0rdentManagementClusterLabelValue,
+					"sveltos-agent":                        "present",
 				},
 			},
 		}
