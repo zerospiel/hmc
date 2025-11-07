@@ -24,6 +24,7 @@ import (
 	"slices"
 
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -32,8 +33,8 @@ import (
 	kcmv1 "github.com/K0rdent/kcm/api/v1beta1"
 )
 
-// ServiceSetObjectKey generates a unique key for a ServiceSet given the input and returns it.
-func ServiceSetObjectKey(systemNamespace string, cd *kcmv1.ClusterDeployment, mcs *kcmv1.MultiClusterService) client.ObjectKey {
+// ObjectKey generates a unique key for a ServiceSet given the input and returns it.
+func ObjectKey(systemNamespace string, cd *kcmv1.ClusterDeployment, mcs *kcmv1.MultiClusterService) client.ObjectKey {
 	// We'll use the following pattern to build ServiceSet name:
 	// <ClusterDeploymentName>-<MultiClusterServiceNameHash>
 	// this will guarantee that the ServiceSet produced by MultiClusterService
@@ -342,26 +343,17 @@ func GetServiceSetWithOperation(
 	l := ctrl.LoggerFrom(ctx)
 	serviceSet := new(kcmv1.ServiceSet)
 	err := c.Get(ctx, operationReq.ObjectKey, serviceSet)
-	if client.IgnoreNotFound(err) != nil {
-		return nil, kcmv1.ServiceSetOperationNone, fmt.Errorf("failed to get ServiceSet %s: %w", operationReq.ObjectKey, err)
+	// if err is not nil and an error is NotFound err,
+	// then we'll create serviceSet
+	if apierrors.IsNotFound(err) {
+		l.V(1).Info("ServiceSet does not exist", "operation", kcmv1.ServiceSetOperationCreate)
+		serviceSet.SetName(operationReq.ObjectKey.Name)
+		serviceSet.SetNamespace(operationReq.ObjectKey.Namespace)
+		return serviceSet, kcmv1.ServiceSetOperationCreate, client.IgnoreNotFound(err)
 	}
-
-	serviceSetRequired := len(operationReq.Services) > 0 || operationReq.PropagateCredentials
-
+	// otherwise return an error
 	if err != nil {
-		if serviceSetRequired {
-			l.V(1).Info("Pending services to deploy, ServiceSet does not exist", "operation", kcmv1.ServiceSetOperationCreate)
-			serviceSet.SetName(operationReq.ObjectKey.Name)
-			serviceSet.SetNamespace(operationReq.ObjectKey.Namespace)
-			return serviceSet, kcmv1.ServiceSetOperationCreate, nil
-		}
-		l.V(1).Info("No services to deploy, ServiceSet does not exist", "operation", kcmv1.ServiceSetOperationNone)
-		return nil, kcmv1.ServiceSetOperationNone, nil
-	}
-
-	if !serviceSetRequired {
-		l.V(1).Info("No services to deploy, ServiceSet exists", "operation", kcmv1.ServiceSetOperationDelete)
-		return serviceSet, kcmv1.ServiceSetOperationDelete, nil
+		return nil, kcmv1.ServiceSetOperationNone, fmt.Errorf("failed to get ServiceSet %s: %w", operationReq.ObjectKey, err)
 	}
 
 	update, err := needsUpdate(serviceSet, operationReq.ProviderSpec, operationReq.Services)
@@ -369,7 +361,7 @@ func GetServiceSetWithOperation(
 		return nil, "", err
 	}
 	if update {
-		l.V(1).Info("Pending services to deploy, ServiceSet exists", "operation", kcmv1.ServiceSetOperationUpdate)
+		l.V(1).Info("Pending changes, ServiceSet exists", "operation", kcmv1.ServiceSetOperationUpdate)
 		return serviceSet, kcmv1.ServiceSetOperationUpdate, nil
 	}
 
