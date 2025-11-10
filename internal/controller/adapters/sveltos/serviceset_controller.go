@@ -46,7 +46,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	kcmv1 "github.com/K0rdent/kcm/api/v1beta1"
 	"github.com/K0rdent/kcm/internal/record"
@@ -72,6 +74,7 @@ var (
 	errBuildHelmChartsFailed        = errors.New("failed to build helm charts")
 	errBuildKustomizationRefsFailed = errors.New("failed to build kustomization refs")
 	errBuildPolicyRefsFailed        = errors.New("failed to build policy refs")
+	errNoMatchingClusters           = errors.New("no matching clusters for ServiceSet")
 )
 
 type profileConfig struct {
@@ -97,44 +100,19 @@ type profileConfig struct {
 type ServiceSetReconciler struct {
 	client.Client
 
-	timeFunc func() time.Time
+	timeFunc  func() time.Time
+	eventChan chan event.GenericEvent
 
 	SystemNamespace string
+
 	// AdapterName is the name of the workload running the controller
 	// effectively this name is used to identify adapter in the
 	// [github.com/k0rdent/kcm/api/v1beta1.StateManagementProvider] spec.
 	AdapterName      string
 	AdapterNamespace string
 
-	requeueInterval time.Duration
-}
-
-func (r *ServiceSetReconciler) getRegionalClient(ctx context.Context, serviceSet *kcmv1.ServiceSet) (client.Client, error) {
-	if serviceSet.Spec.Cluster == "" {
-		// The ServiceSet created for self-managing the management cluster has
-		// empty .spec.cluster because it isn't matching any ClusterDeployment.
-		// So we return the management cluster client in this case.
-		return r.Client, nil
-	}
-
-	cd := new(kcmv1.ClusterDeployment)
-	cdKey := client.ObjectKey{Namespace: serviceSet.Namespace, Name: serviceSet.Spec.Cluster}
-	if err := r.Get(ctx, cdKey, cd); err != nil {
-		return nil, fmt.Errorf("failed to get %s ClusterDeployment: %w", cdKey, err)
-	}
-
-	cred := new(kcmv1.Credential)
-	credKey := client.ObjectKey{Namespace: cd.Namespace, Name: cd.Spec.Credential}
-	if err := r.Get(ctx, credKey, cred); err != nil {
-		return nil, fmt.Errorf("failed to get %s Credential: %w", credKey, err)
-	}
-
-	rgnClient, err := kubeutil.GetRegionalClientByRegionName(ctx, r.Client, r.SystemNamespace, cred.Spec.Region, schemeutil.GetRegionalSchemeWithSveltos)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get regional client: %w", err)
-	}
-
-	return rgnClient, nil
+	MaxConcurrentReconciles int
+	requeueInterval         time.Duration
 }
 
 func (r *ServiceSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
@@ -152,7 +130,7 @@ func (r *ServiceSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	rgnClient, err := r.getRegionalClient(ctx, serviceSet)
+	rgnClient, err := getRegionalClient(ctx, r.Client, serviceSet, r.SystemNamespace)
 	if err != nil {
 		l.Error(err, "failed to get regional client")
 		return ctrl.Result{}, err
@@ -182,9 +160,22 @@ func (r *ServiceSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	clone := serviceSet.DeepCopy()
 	defer func() {
+		// we won't update serviceSet anyhow in case of any error
+		// occurred during reconciliation, by returning error
+		// serviceSet object being reconciled will be requeued
+		// with respect of rate limits
+		if err != nil {
+			return
+		}
+
 		fillNotDeployedServices(serviceSet, r.timeFunc)
+		// if serviceSet status changed we'll update object's
+		// status, so object being reconciled will be requeued,
+		// otherwise we'll do nothing since the poller will
+		// enqueue serviceSet object in case any changes in
+		// corresponding ClusterSummary object.
 		if !equality.Semantic.DeepEqual(clone.Status, serviceSet.Status) {
-			err = errors.Join(err, r.Status().Update(ctx, serviceSet))
+			err = r.Status().Update(ctx, serviceSet)
 		}
 		l.Info("ServiceSet reconciled", "duration", time.Since(start))
 	}()
@@ -213,16 +204,13 @@ func (r *ServiceSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 	// then we'll collect the statuses of the services
-	requeue, err := r.collectServiceStatuses(ctx, rgnClient, serviceSet)
+	err = r.collectServiceStatuses(ctx, rgnClient, serviceSet)
 	if err != nil {
 		record.Warnf(serviceSet, serviceSet.Generation, kcmv1.ServiceSetCollectServiceStatusesFailedEvent,
 			"Failed to collect Service statuses for ServiceSet %s: %v", serviceSet.Name, err)
 		return ctrl.Result{}, err
 	}
 
-	if requeue {
-		return ctrl.Result{RequeueAfter: r.requeueInterval}, nil
-	}
 	return ctrl.Result{}, nil
 }
 
@@ -294,6 +282,22 @@ func (r *ServiceSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	r.requeueInterval = 10 * time.Second
 
+	// in case reconciliation will slowdown and occasionally poller will produce
+	// events faster than controller will reconcile objects, we will have a 10-fold
+	// capacity reserve for event channel.
+	r.eventChan = make(chan event.GenericEvent, r.MaxConcurrentReconciles*10)
+
+	poller := &Poller{
+		Client:          r.Client,
+		requeueInterval: r.requeueInterval,
+		eventChan:       r.eventChan,
+		systemNamespace: r.SystemNamespace,
+	}
+
+	if err := mgr.Add(poller); err != nil {
+		return fmt.Errorf("failed to add poller to manager: %w", err)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		WithOptions(controller.TypedOptions[ctrl.Request]{
 			MaxConcurrentReconciles: 10,
@@ -346,6 +350,7 @@ func (r *ServiceSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			}
 			return requests
 		})).
+		WatchesRawSource(source.Channel(r.eventChan, &handler.EnqueueRequestForObject{})).
 		Complete(r)
 }
 
@@ -629,7 +634,7 @@ func (*ServiceSetReconciler) getClusterReference(ctx context.Context, rgnClient 
 	return corev1.ObjectReference{}, err
 }
 
-func (*ServiceSetReconciler) collectServiceStatuses(ctx context.Context, rgnClient client.Client, serviceSet *kcmv1.ServiceSet) (requeue bool, err error) {
+func (*ServiceSetReconciler) collectServiceStatuses(ctx context.Context, rgnClient client.Client, serviceSet *kcmv1.ServiceSet) (err error) {
 	start := time.Now()
 	l := ctrl.LoggerFrom(ctx)
 	l.Info("Collecting Service statuses")
@@ -638,27 +643,27 @@ func (*ServiceSetReconciler) collectServiceStatuses(ctx context.Context, rgnClie
 		clusterProfile := new(addoncontrollerv1beta1.ClusterProfile)
 		key := client.ObjectKeyFromObject(serviceSet)
 		if err := rgnClient.Get(ctx, key, clusterProfile); err != nil {
-			return false, fmt.Errorf("failed to get ClusterProfile: %w", err)
+			return fmt.Errorf("failed to get ClusterProfile: %w", err)
 		}
 
 		l.V(1).Info("Found matching ClusterProfile", "ClusterProfile", client.ObjectKeyFromObject(clusterProfile))
-		requeue, err = collectServiceStatusesFromProfileOrClusterProfile(ctx, rgnClient, serviceSet, clusterProfile)
+		err = collectServiceStatusesFromProfileOrClusterProfile(ctx, rgnClient, serviceSet, clusterProfile)
 	} else {
 		profile := new(addoncontrollerv1beta1.Profile)
 		key := client.ObjectKeyFromObject(serviceSet)
 		if err := rgnClient.Get(ctx, key, profile); err != nil {
-			return false, fmt.Errorf("failed to get Profile: %w", err)
+			return fmt.Errorf("failed to get Profile: %w", err)
 		}
 
 		l.V(1).Info("Found matching Profile", "Profile", client.ObjectKeyFromObject(profile))
-		requeue, err = collectServiceStatusesFromProfileOrClusterProfile(ctx, rgnClient, serviceSet, profile)
+		err = collectServiceStatusesFromProfileOrClusterProfile(ctx, rgnClient, serviceSet, profile)
 	}
 
 	l.Info("Collecting Service statuses completed", "duration", time.Since(start))
-	return requeue, err
+	return err
 }
 
-func collectServiceStatusesFromProfileOrClusterProfile(ctx context.Context, rgnClient client.Client, serviceSet *kcmv1.ServiceSet, profileObj client.Object) (requeue bool, _ error) {
+func getClusterSummaryForServiceSet(ctx context.Context, rgnClient client.Client, serviceSet *kcmv1.ServiceSet, profileObj client.Object) (*addoncontrollerv1beta1.ClusterSummary, error) {
 	l := ctrl.LoggerFrom(ctx)
 
 	var (
@@ -679,13 +684,13 @@ func collectServiceStatusesFromProfileOrClusterProfile(ctx context.Context, rgnC
 		profileName = p.Name
 		l.V(1).Info("Processing ClusterProfile", "clusterProfile", client.ObjectKeyFromObject(p))
 	default:
-		return false, fmt.Errorf("unsupported profile type: %T", profileObj)
+		return nil, fmt.Errorf("unsupported profile type: %T", profileObj)
 	}
 
 	if len(matchingRefs) == 0 {
 		l.Info("No matching clusters found for ServiceSet")
 		serviceSet.Status.Deployed = false
-		return true, nil
+		return nil, errNoMatchingClusters
 	}
 
 	// Use the first matching cluster reference for both types because:
@@ -707,17 +712,29 @@ func collectServiceStatusesFromProfileOrClusterProfile(ctx context.Context, rgnC
 	summary := new(addoncontrollerv1beta1.ClusterSummary)
 	summaryRef := client.ObjectKey{Name: summaryName, Namespace: obj.Namespace}
 	if err := rgnClient.Get(ctx, summaryRef, summary); err != nil {
-		return false, fmt.Errorf("failed to get ClusterSummary %s to fetch status: %w", summaryRef.String(), err)
+		return nil, fmt.Errorf("failed to get ClusterSummary %s to fetch status: %w", summaryRef.String(), err)
+	}
+	return summary, nil
+}
+
+func collectServiceStatusesFromProfileOrClusterProfile(ctx context.Context, rgnClient client.Client, serviceSet *kcmv1.ServiceSet, profileObj client.Object) (_ error) {
+	l := ctrl.LoggerFrom(ctx)
+
+	summary, err := getClusterSummaryForServiceSet(ctx, rgnClient, serviceSet, profileObj)
+	if errors.Is(err, errNoMatchingClusters) {
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 
-	l.V(1).Info("Found matching ClusterSummary", "summary", summaryRef)
+	l.V(1).Info("Found matching ClusterSummary", "summary", client.ObjectKeyFromObject(summary))
 	serviceSet.Status.Services = servicesStateFromSummary(l, summary, serviceSet)
 	serviceSet.Status.Deployed = !slices.ContainsFunc(serviceSet.Status.Services, func(s kcmv1.ServiceState) bool {
 		return s.State != kcmv1.ServiceStateDeployed
 	})
 
-	requeue = !serviceSet.Status.Deployed
-	return requeue, nil
+	return nil
 }
 
 // getHelmCharts returns slice of helm chart options to use with Sveltos.
@@ -938,9 +955,9 @@ func helmChartFromFluxSource(
 		return helmChart, fmt.Errorf("status for ServiceTemplate %s/%s has not been updated yet", template.Namespace, template.Name)
 	}
 
-	source := template.Spec.Helm.ChartSource
+	chartSource := template.Spec.Helm.ChartSource
 	status := template.Status.SourceStatus
-	sanitizedPath := strings.TrimPrefix(strings.TrimPrefix(source.Path, "."), "/")
+	sanitizedPath := strings.TrimPrefix(strings.TrimPrefix(chartSource.Path, "."), "/")
 	url := fmt.Sprintf("%s://%s/%s/%s", status.Kind, status.Namespace, status.Name, sanitizedPath)
 
 	helmOptions := template.Spec.HelmOptions
@@ -1330,7 +1347,7 @@ func servicesStateFromSummary(
 	summary *addoncontrollerv1beta1.ClusterSummary,
 	serviceSet *kcmv1.ServiceSet,
 ) []kcmv1.ServiceState {
-	logger.Info("Collecting services state from summary")
+	logger.Info("Collecting services state from ClusterSummary", "cluster_summary", client.ObjectKeyFromObject(summary))
 	// we'll recreate service states list according to the desired services
 	states := make([]kcmv1.ServiceState, 0, len(serviceSet.Spec.Services))
 	servicesMap := make(map[client.ObjectKey]kcmv1.ServiceState)
@@ -1349,7 +1366,6 @@ func servicesStateFromSummary(
 			FailureMessage:          "",
 		}
 	}
-	logger.V(1).Info("Desired services map", "servicesMap", servicesMap)
 
 	hasKustomizations := len(summary.Spec.ClusterProfileSpec.KustomizationRefs) > 0
 	hasPolicies := len(summary.Spec.ClusterProfileSpec.PolicyRefs) > 0
@@ -1449,4 +1465,33 @@ func servicesStateFromSummary(
 	}
 	logger.V(1).Info("Collected services state from summary", "states", states)
 	return states
+}
+
+// getRegionalClient returns local or regional kubernetes client depending on the target cluster type.
+func getRegionalClient(ctx context.Context, cl client.Client, serviceSet *kcmv1.ServiceSet, systemNamespace string) (client.Client, error) {
+	if serviceSet.Spec.Cluster == "" {
+		// The ServiceSet created for self-managing the management cluster has
+		// empty .spec.cluster because it isn't matching any ClusterDeployment.
+		// So we return the management cluster client in this case.
+		return cl, nil
+	}
+
+	cd := new(kcmv1.ClusterDeployment)
+	cdKey := client.ObjectKey{Namespace: serviceSet.Namespace, Name: serviceSet.Spec.Cluster}
+	if err := cl.Get(ctx, cdKey, cd); err != nil {
+		return nil, fmt.Errorf("failed to get %s ClusterDeployment: %w", cdKey, err)
+	}
+
+	cred := new(kcmv1.Credential)
+	credKey := client.ObjectKey{Namespace: cd.Namespace, Name: cd.Spec.Credential}
+	if err := cl.Get(ctx, credKey, cred); err != nil {
+		return nil, fmt.Errorf("failed to get %s Credential: %w", credKey, err)
+	}
+
+	rgnClient, err := kubeutil.GetRegionalClientByRegionName(ctx, cl, systemNamespace, cred.Spec.Region, schemeutil.GetRegionalSchemeWithSveltos)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get regional client: %w", err)
+	}
+
+	return rgnClient, nil
 }
