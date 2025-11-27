@@ -21,6 +21,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -46,7 +47,7 @@ func (in *ClusterTemplateChainValidator) SetupWebhookWithManager(mgr ctrl.Manage
 var _ webhook.CustomValidator = &ClusterTemplateChainValidator{}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type.
-func (*ClusterTemplateChainValidator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
+func (in *ClusterTemplateChainValidator) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
 	chain, ok := obj.(*kcmv1.ClusterTemplateChain)
 	if !ok {
 		return admission.Warnings{"Wrong object"}, apierrors.NewBadRequest(fmt.Sprintf("expected ClusterTemplateChain but got a %T", obj))
@@ -56,7 +57,28 @@ func (*ClusterTemplateChainValidator) ValidateCreate(_ context.Context, obj runt
 		return warnings, errInvalidTemplateChainSpec
 	}
 
+	var errs field.ErrorList
+	for i, st := range chain.Spec.SupportedTemplates {
+		key := client.ObjectKey{Namespace: chain.Namespace, Name: st.Name}
+		if err := in.Get(ctx, key, &kcmv1.ClusterTemplate{}); err != nil {
+			if apierrors.IsNotFound(err) {
+				errs = append(errs, newChainNotFoundTemplateError(i, st.Name))
+			} else {
+				return nil, fmt.Errorf("failed to get %s: %w", key, err)
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return nil, apierrors.NewInvalid(chain.GroupVersionKind().GroupKind(), chain.Name, errs)
+	}
+
 	return nil, nil
+}
+
+// TODO: generalize the gets, pass kind(?), get the partial object meta
+
+func newChainNotFoundTemplateError(idx int, name string) *field.Error {
+	return field.NotFound(field.NewPath("spec", fmt.Sprintf("supportedTemplates[%d]", idx), "name"), name)
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type.
