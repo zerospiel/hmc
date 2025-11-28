@@ -366,7 +366,11 @@ jobs:
       - name: Run E2E tests
         if: steps.provider_check.outputs.cloud_present == 'true'
         env:
-          GINKGO_LABEL_FILTER: 'provider:cloud'
+          # This would run all specs with 'provider:cloud' and 'mothership' labels.
+          # We want the mothership tests to be run by default but we don't want to 
+          # set up a new mothership cluster (make test-e2e) just to run these tests 
+          # so we bundle them together with cloud provider tests.
+          GINKGO_LABEL_FILTER: 'provider:cloud,mothership'
           CLUSTER_DEPLOYMENT_PREFIX: ${{ needs.lint-test.outputs.clusterprefix }}
           VERSION: ${{ needs.lint-test.outputs.version }}
           SEGMENT_TOKEN: ${{ secrets.SEGMENT_TOKEN_DEV }}

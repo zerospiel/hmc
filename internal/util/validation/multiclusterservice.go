@@ -50,7 +50,7 @@ func ValidateMCSDelete(ctx context.Context, c client.Client, mcs *kcmv1.MultiClu
 		return fmt.Errorf("failed to list MultiClusterServices: %w", err)
 	}
 
-	graph := generateReserveMCSDependencyGraph(mcsList)
+	graph := generateReverseMCSDependencyGraph(mcsList)
 	key := client.ObjectKey{Name: mcs.GetName()}
 
 	dependents := graph[key]
@@ -120,8 +120,8 @@ func generateMCSDependencyGraph(mcsList *kcmv1.MultiClusterServiceList) map[clie
 	return graph
 }
 
-// generateReserveMCSDependencyGraph returns a mapping of each MCS with the MCS dependent on it as values.
-func generateReserveMCSDependencyGraph(mcsList *kcmv1.MultiClusterServiceList) map[client.ObjectKey][]client.ObjectKey {
+// generateReverseMCSDependencyGraph returns a mapping of each MCS with the MCS dependent on it as values.
+func generateReverseMCSDependencyGraph(mcsList *kcmv1.MultiClusterServiceList) map[client.ObjectKey][]client.ObjectKey {
 	if mcsList == nil {
 		return nil
 	}

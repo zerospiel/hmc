@@ -377,7 +377,7 @@ func TestGenerateMCSDependencyGraph(t *testing.T) {
 	}
 }
 
-func TestGenerateReserveMCSDependencyGraph(t *testing.T) {
+func TestGenerateReverseMCSDependencyGraph(t *testing.T) {
 	for _, tc := range []struct {
 		testName      string
 		mcsList       *kcmv1.MultiClusterServiceList
@@ -523,7 +523,7 @@ func TestGenerateReserveMCSDependencyGraph(t *testing.T) {
 		},
 	} {
 		t.Run(tc.testName, func(t *testing.T) {
-			graph := generateReserveMCSDependencyGraph(tc.mcsList)
+			graph := generateReverseMCSDependencyGraph(tc.mcsList)
 			if !equality.Semantic.DeepEqual(graph, tc.expectedGraph) {
 				t.Errorf("generateMCSDependencyGraph(%s): \n\texpected:\n\t%v\n\n\tactual:\n\t%v", tc.testName, tc.expectedGraph, graph)
 			}
