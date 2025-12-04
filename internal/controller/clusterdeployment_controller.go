@@ -1105,6 +1105,11 @@ func (r *ClusterDeploymentReconciler) setServicesCondition(ctx context.Context, 
 		Reason: kcmv1.SucceededReason,
 	}
 
+	serviceStateMap := make(
+		map[client.ObjectKey][]*kcmv1.ServiceState,
+		len(cd.Spec.ServiceSpec.Services),
+	)
+
 	for _, serviceSet := range serviceSetList.Items {
 		// we'll skip serviceSets being deleted
 		if !serviceSet.DeletionTimestamp.IsZero() {
@@ -1123,8 +1128,27 @@ func (r *ClusterDeploymentReconciler) setServicesCondition(ctx context.Context, 
 			if svc.State == kcmv1.ServiceStateDeleting {
 				continue
 			}
-			totalServices++
-			if svc.State == kcmv1.ServiceStateDeployed {
+
+			key := serviceset.ServiceKey(svc.Namespace, svc.Name)
+			serviceStateMap[key] = append(serviceStateMap[key], &svc)
+		}
+	}
+
+	totalServices = len(serviceStateMap)
+	for _, svcStates := range serviceStateMap {
+		// For each of the services identified by ServiceKey(namespace, name), we loop
+		// through its ServiceStates collected from all the ServiceSets that deploy that
+		// service. If any one of these ServiceStates have deployed state then we
+		// consider that service to have been successfully deployed.
+		//
+		// Consider if we have a ClusterDeployment and MultiClusterService both deploying
+		// the same service on a cluster with the MultiClusterService having higher priority.
+		// In such a case, it is possible to have 2 ServiceState entries for the service where
+		// one reports success and the other reports failure. Therefore, we take into account
+		// both the ServiceStates so we don't erroneously report failure when the service has
+		// successfully been deployed on the cluster by the MultiClusterService.
+		for _, svcState := range svcStates {
+			if svcState.State == kcmv1.ServiceStateDeployed {
 				readyServices++
 			}
 		}
