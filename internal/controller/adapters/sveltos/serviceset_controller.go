@@ -783,7 +783,7 @@ func getHelmCharts(ctx context.Context, c client.Client, serviceSet *kcmv1.Servi
 				Name:                    svc.Name,
 				Namespace:               svc.Namespace,
 				Template:                svc.Template,
-				Version:                 svc.Template,
+				Version:                 svc.Version,
 				State:                   kcmv1.ServiceStateProvisioning,
 			}
 			serviceSet.Status.Services = append(serviceSet.Status.Services, serviceStatus)
@@ -1025,7 +1025,7 @@ func getKustomizationRefs(ctx context.Context, c client.Client, serviceSet *kcmv
 				Name:                    svc.Name,
 				Namespace:               svc.Namespace,
 				Template:                svc.Template,
-				Version:                 svc.Template,
+				Version:                 svc.Version,
 				State:                   kcmv1.ServiceStateProvisioning,
 			}
 			serviceSet.Status.Services = append(serviceSet.Status.Services, serviceStatus)
@@ -1071,7 +1071,7 @@ func getPolicyRefs(ctx context.Context, c client.Client, serviceSet *kcmv1.Servi
 				Name:                    svc.Name,
 				Namespace:               svc.Namespace,
 				Template:                svc.Template,
-				Version:                 svc.Template,
+				Version:                 svc.Version,
 				State:                   kcmv1.ServiceStateProvisioning,
 			}
 			serviceSet.Status.Services = append(serviceSet.Status.Services, serviceStatus)
@@ -1369,7 +1369,7 @@ func servicesStateFromSummary(
 			Name:                    service.Name,
 			Namespace:               service.Namespace,
 			Template:                service.Template,
-			Version:                 service.Template,
+			Version:                 service.Version,
 			State:                   kcmv1.ServiceStateProvisioning,
 			FailureMessage:          "",
 		}

@@ -2709,6 +2709,11 @@ func (in *ServiceState) DeepCopyInto(out *ServiceState) {
 		in, out := &in.LastStateTransitionTime, &out.LastStateTransitionTime
 		*out = (*in).DeepCopy()
 	}
+	if in.Version != nil {
+		in, out := &in.Version, &out.Version
+		*out = new(string)
+		**out = **in
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))
@@ -2953,6 +2958,11 @@ func (in *ServiceWithValues) DeepCopyInto(out *ServiceWithValues) {
 		in, out := &in.HelmOptions, &out.HelmOptions
 		*out = new(ServiceHelmOptions)
 		(*in).DeepCopyInto(*out)
+	}
+	if in.Version != nil {
+		in, out := &in.Version, &out.Version
+		*out = new(string)
+		**out = **in
 	}
 	if in.ValuesFrom != nil {
 		in, out := &in.ValuesFrom, &out.ValuesFrom
@@ -3285,7 +3295,7 @@ func (in *UpgradePath) DeepCopyInto(out *UpgradePath) {
 	*out = *in
 	if in.Versions != nil {
 		in, out := &in.Versions, &out.Versions
-		*out = make([]string, len(*in))
+		*out = make([]AvailableUpgrade, len(*in))
 		copy(*out, *in)
 	}
 }

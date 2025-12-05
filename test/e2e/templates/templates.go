@@ -48,6 +48,7 @@ const (
 	TemplateVSphereHostedCP       Type = "vsphere-hosted-cp"
 	TemplateAdoptedCluster        Type = "adopted-cluster"
 	TemplateRemoteCluster         Type = "remote-cluster"
+	TemplateDockerCluster         Type = "docker-hosted-cp"
 )
 
 // Types is an array of all the supported template types
@@ -67,6 +68,7 @@ var Types = []Type{
 	TemplateVSphereHostedCP,
 	TemplateAdoptedCluster,
 	TemplateRemoteCluster,
+	TemplateDockerCluster,
 }
 
 func GetType(template string) Type {
@@ -112,28 +114,42 @@ func FindLatestTemplatesWithType(clusterTemplates []string, templateType Type, n
 	return templates
 }
 
+func createAndWaitForValid(ctx context.Context, client crclient.Client, obj crclient.Object, kind string) {
+	err := client.Create(ctx, obj)
+	Expect(crclient.IgnoreAlreadyExists(err)).NotTo(HaveOccurred(), fmt.Sprintf("failed to create %s", kind))
+
+	Eventually(func() error {
+		key := crclient.ObjectKeyFromObject(obj)
+		if err := client.Get(ctx, key, obj); err != nil {
+			return fmt.Errorf("failed to get %s %s/%s: %w", kind, key.Namespace, key.Name, err)
+		}
+
+		switch o := obj.(type) {
+		case *kcmv1.ServiceTemplate:
+			if !o.Status.Valid {
+				return fmt.Errorf("%s %s/%s is not yet valid: %s", kind, key.Namespace, key.Name, o.Status.ValidationError)
+			}
+		case *kcmv1.ServiceTemplateChain:
+			if !o.Status.Valid {
+				return fmt.Errorf("%s %s/%s is not yet valid: %s", kind, key.Namespace, key.Name, o.Status.ValidationError)
+			}
+		default:
+			return fmt.Errorf("unsupported type %T", obj)
+		}
+		return nil
+	}).WithTimeout(15 * time.Minute).WithPolling(15 * time.Second).Should(Succeed())
+}
+
+// CreateServiceTemplate creates a ServiceTemplate and waits for it to become valid
 func CreateServiceTemplate(ctx context.Context, client crclient.Client, namespace, name string, spec kcmv1.ServiceTemplateSpec) {
-	st := &kcmv1.ServiceTemplate{
+	obj := &kcmv1.ServiceTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: namespace,
 			Name:      name,
 		},
 		Spec: spec,
 	}
-	err := client.Create(ctx, st)
-	Expect(crclient.IgnoreAlreadyExists(err)).NotTo(HaveOccurred(), "failed to create ServiceTemplate")
-
-	Eventually(func() error {
-		if err = client.Get(ctx, crclient.ObjectKey{Namespace: namespace, Name: name}, st); err != nil {
-			return fmt.Errorf("failed to get ServiceTemplate %s/%s: %w", namespace, name, err)
-		}
-		if !st.Status.Valid {
-			return fmt.Errorf("ServiceTemplate %s/%s is not yet valid: %s", namespace, name, st.Status.ValidationError)
-		}
-		return nil
-	}).WithTimeout(10 * time.Minute).WithPolling(15 * time.Second).Should(Succeed())
-
-	_, _ = fmt.Fprintf(GinkgoWriter, "Created ServiceTemplate %s\n", crclient.ObjectKeyFromObject(st))
+	createAndWaitForValid(ctx, client, obj, "ServiceTemplate")
 }
 
 func CreateServiceTemplateWithDelete(ctx context.Context, client crclient.Client, namespace, name string, spec kcmv1.ServiceTemplateSpec) func() error {
@@ -159,4 +175,16 @@ func CreateServiceTemplateWithDelete(ctx context.Context, client crclient.Client
 		_, _ = fmt.Fprintf(GinkgoWriter, "Deleted ServiceTemplate %s\n", stKey)
 		return nil
 	}
+}
+
+// CreateTemplateChain creates a ServiceTemplateChain and waits for it to become valid
+func CreateTemplateChain(ctx context.Context, client crclient.Client, namespace, name string, spec kcmv1.TemplateChainSpec) {
+	obj := &kcmv1.ServiceTemplateChain{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+		},
+		Spec: spec,
+	}
+	createAndWaitForValid(ctx, client, obj, "ServiceTemplateChain")
 }
