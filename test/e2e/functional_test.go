@@ -23,6 +23,7 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	addoncontrollerv1beta1 "github.com/projectsveltos/addon-controller/api/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -321,6 +322,53 @@ var _ = Describe("Functional e2e tests", Label("provider:cloud", "provider:docke
 
 			Expect(kc.CrClient.Get(ctx, crclient.ObjectKeyFromObject(serviceSet), serviceSet)).NotTo(HaveOccurred(), "failed to fetch ServiceSet")
 			Expect(serviceSet.Spec.Services).To(HaveLen(3))
+			Expect(clusterDeleteFunc()).Error().NotTo(HaveOccurred(), "failed to delete cluster")
+			clusterDeleteFunc = nil
+		}
+	})
+
+	It("Pause service deployment", func() {
+		defer GinkgoRecover()
+		for i, cfg := range config.Config[config.TestingProviderDocker] {
+			ctx := context.Background()
+			cfg.SetDefaults(clusterTemplates, config.TestingProviderDocker)
+
+			By(fmt.Sprintf("Testing configuration:\n%s\n", cfg.String()))
+
+			clusterName := clusterdeployment.GenerateClusterName(fmt.Sprintf("docker-%d", i))
+
+			sd, deleteFn := createAndWaitCluster(ctx, kc, clusterName, templateChainName)
+			clusterNames = append(clusterNames, clusterName)
+			clusterDeleteFunc = deleteFn
+
+			waitForServiceDeployments(ctx, kc, sd, sd.Spec.ServiceSpec.Services, 10*time.Minute, 10*time.Second)
+
+			serviceSet := &kcmv1.ServiceSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      sd.Name,
+					Namespace: sd.Namespace,
+				},
+			}
+			Expect(kc.CrClient.Get(ctx, crclient.ObjectKeyFromObject(serviceSet), serviceSet)).NotTo(HaveOccurred(), "failed to fetch ServiceSet")
+			Expect(serviceSet.Spec.Services).To(HaveLen(1))
+
+			serviceSet.SetAnnotations(map[string]string{
+				kcmv1.ServiceSetPausedAnnotation: "true",
+			})
+			Expect(kc.CrClient.Update(ctx, serviceSet)).NotTo(HaveOccurred(), "failed to update ServiceSet")
+			updateClusterDeploymentTemplate(ctx, sd, nginxVersions[2])
+
+			Eventually(ctx, func() error {
+				profile := addoncontrollerv1beta1.Profile{}
+				Expect(kc.CrClient.Get(ctx, crclient.ObjectKeyFromObject(serviceSet), &profile)).NotTo(HaveOccurred())
+				_, ok := profile.Annotations[addoncontrollerv1beta1.ProfilePausedAnnotation]
+				Expect(ok).To(BeTrue())
+				return nil
+			}, 30*time.Minute, 10*time.Second).Should(Succeed())
+
+			serviceSet.SetAnnotations(map[string]string{})
+			Expect(kc.CrClient.Update(ctx, serviceSet)).NotTo(HaveOccurred(), "failed to update ServiceSet")
+
 			Expect(clusterDeleteFunc()).Error().NotTo(HaveOccurred(), "failed to delete cluster")
 			clusterDeleteFunc = nil
 		}

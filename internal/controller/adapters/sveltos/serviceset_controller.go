@@ -896,7 +896,7 @@ func helmChartFromSpecOrRef(
 			return svc.Name
 		}(),
 		RegistryCredentialsConfig: registryCredentialsConfig,
-		Options:                   convertHelmOptions(*helmOptions),
+		Options:                   convertHelmOptions(helmOptions),
 	}
 	return helmChart, nil
 }
@@ -1011,7 +1011,7 @@ func helmChartFromFluxSource(
 		ReleaseNamespace: svc.Namespace,
 		Values:           svc.Values,
 		ValuesFrom:       convertValuesFrom(svc.ValuesFrom, namespace),
-		Options:          convertHelmOptions(*helmOptions),
+		Options:          convertHelmOptions(helmOptions),
 	}
 
 	return helmChart, nil
@@ -1141,7 +1141,10 @@ func convertValuesFrom(src []kcmv1.ValuesFrom, namespace string) []addoncontroll
 	return valueFrom
 }
 
-func convertHelmOptions(options kcmv1.ServiceHelmOptions) *addoncontrollerv1beta1.HelmOptions {
+func convertHelmOptions(options *kcmv1.ServiceHelmOptions) *addoncontrollerv1beta1.HelmOptions {
+	if options == nil {
+		return nil
+	}
 	toReturn := addoncontrollerv1beta1.HelmOptions{
 		Timeout: options.Timeout,
 	}
