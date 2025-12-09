@@ -17,8 +17,10 @@ package serviceset
 import (
 	"testing"
 
+	addoncontrollerv1beta1 "github.com/projectsveltos/addon-controller/api/v1beta1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -28,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	kcmv1 "github.com/K0rdent/kcm/api/v1beta1"
+	kubeutil "github.com/K0rdent/kcm/internal/util/kube"
 )
 
 func Test_ServicesToDeploy(t *testing.T) {
@@ -576,6 +579,165 @@ func Test_FilterServiceDependencies_Operation(t *testing.T) {
 					relevantFields(t, filtered),
 				)
 			}
+		})
+	}
+}
+
+func TestUtil_StateManagementProviderConfigFromServiceSpec(t *testing.T) {
+	t.Parallel()
+
+	type testCase struct {
+		description string
+		spec        kcmv1.ServiceSpec
+		want        kcmv1.StateManagementProviderConfig
+	}
+
+	f := func(t *testing.T, tc testCase) {
+		t.Helper()
+		actual, err := StateManagementProviderConfigFromServiceSpec(tc.spec)
+		require.NoError(t, err)
+		require.Equal(t, tc.want, actual)
+	}
+
+	testCases := []testCase{
+		{
+			description: "neither provider name nor config is set",
+			spec: kcmv1.ServiceSpec{
+				PolicyRefs: []addoncontrollerv1beta1.PolicyRef{
+					{
+						Name:           "policy-name",
+						Namespace:      "policy-namespace",
+						Kind:           "ConfigMap",
+						DeploymentType: addoncontrollerv1beta1.DeploymentTypeRemote,
+					},
+				},
+			},
+			want: kcmv1.StateManagementProviderConfig{
+				Name: kubeutil.DefaultStateManagementProvider,
+				Config: &apiextv1.JSON{
+					Raw: []byte(`{"policyRefs":[{"namespace":"policy-namespace","name":"policy-name","kind":"ConfigMap","deploymentType":"Remote"}]}`),
+				},
+			},
+		},
+		{
+			description: "provider name is not set, config is set",
+			spec: kcmv1.ServiceSpec{
+				Provider: kcmv1.StateManagementProviderConfig{
+					Config: &apiextv1.JSON{
+						Raw: []byte(`{"policyRefs":[{"namespace":"policy-namespace","name":"policy-name","kind":"ConfigMap","deploymentType":"Remote"}]}`),
+					},
+					SelfManagement: false,
+				},
+			},
+			want: kcmv1.StateManagementProviderConfig{
+				Name: kubeutil.DefaultStateManagementProvider,
+				Config: &apiextv1.JSON{
+					Raw: []byte(`{"policyRefs":[{"namespace":"policy-namespace","name":"policy-name","kind":"ConfigMap","deploymentType":"Remote"}]}`),
+				},
+			},
+		},
+		{
+			description: "provider name is not set, config is set, deprecated fields are discarded",
+			spec: kcmv1.ServiceSpec{
+				Provider: kcmv1.StateManagementProviderConfig{
+					Config: &apiextv1.JSON{
+						Raw: []byte(`{"policyRefs":[{"namespace":"policy-namespace","name":"policy-name","kind":"ConfigMap","deploymentType":"Remote"}]}`),
+					},
+					SelfManagement: true,
+				},
+				PolicyRefs: []addoncontrollerv1beta1.PolicyRef{
+					{
+						Name:           "discarded-policy-name",
+						Namespace:      "discarded-policy-namespace",
+						Kind:           "ConfigMap",
+						DeploymentType: addoncontrollerv1beta1.DeploymentTypeRemote,
+					},
+				},
+			},
+			want: kcmv1.StateManagementProviderConfig{
+				Name: kubeutil.DefaultStateManagementProvider,
+				Config: &apiextv1.JSON{
+					Raw: []byte(`{"policyRefs":[{"namespace":"policy-namespace","name":"policy-name","kind":"ConfigMap","deploymentType":"Remote"}]}`),
+				},
+				SelfManagement: true,
+			},
+		},
+		{
+			description: "provider name is set, config is not set",
+			spec: kcmv1.ServiceSpec{
+				Provider: kcmv1.StateManagementProviderConfig{
+					Name:           "custom-provider",
+					SelfManagement: false,
+				},
+			},
+			want: kcmv1.StateManagementProviderConfig{
+				Name:           "custom-provider",
+				SelfManagement: false,
+			},
+		},
+		{
+			description: "provider name is set, config is not set, self management is set to true",
+			spec: kcmv1.ServiceSpec{
+				Provider: kcmv1.StateManagementProviderConfig{
+					Name:           "custom-provider",
+					SelfManagement: true,
+				},
+			},
+			want: kcmv1.StateManagementProviderConfig{
+				Name:           "custom-provider",
+				SelfManagement: true,
+			},
+		},
+		{
+			description: "provider name is set, config is set",
+			spec: kcmv1.ServiceSpec{
+				Provider: kcmv1.StateManagementProviderConfig{
+					Name: "custom-provider",
+					Config: &apiextv1.JSON{
+						Raw: []byte(`
+{
+  "policyRefs":
+  [
+    {
+      "namespace":"policy-namespace",
+      "name":"policy-name",
+      "kind":"ConfigMap",
+      "deploymentType":"Remote"
+    }
+  ],
+  "syncMode":"OneTime",
+  "continueOnError":true
+}`),
+					},
+					SelfManagement: false,
+				},
+			},
+			want: kcmv1.StateManagementProviderConfig{
+				Name: "custom-provider",
+				Config: &apiextv1.JSON{
+					Raw: []byte(`
+{
+  "policyRefs":
+  [
+    {
+      "namespace":"policy-namespace",
+      "name":"policy-name",
+      "kind":"ConfigMap",
+      "deploymentType":"Remote"
+    }
+  ],
+  "syncMode":"OneTime",
+  "continueOnError":true
+}`),
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			t.Parallel()
+			f(t, tc)
 		})
 	}
 }
