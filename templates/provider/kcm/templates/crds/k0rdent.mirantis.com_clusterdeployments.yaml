@@ -1464,6 +1464,12 @@ spec:
                           service upgrade paths.
                         properties:
                           upgradePaths:
+                            description: 'Deprecated: use Versions to define versions
+                              that service can be upgraded to.'
+                            items:
+                              type: string
+                            type: array
+                          versions:
                             description: Versions contains the list of versions that
                               service can be upgraded to.
                             items:

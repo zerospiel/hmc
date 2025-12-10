@@ -368,8 +368,11 @@ type ServiceUpgradePaths struct {
 
 // UpgradePath contains details for the state of service upgrade paths.
 type UpgradePath struct {
+	// Deprecated: use Versions to define versions that service can be upgraded to.
+	UpgradePaths []string `json:"upgradePaths,omitempty"`
+
 	// Versions contains the list of versions that service can be upgraded to.
-	Versions []AvailableUpgrade `json:"upgradePaths,omitempty"`
+	Versions []AvailableUpgrade `json:"versions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
