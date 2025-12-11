@@ -395,7 +395,7 @@ func ServicesToDeploy(
 				return svc.Name == s.Name && effectiveNamespace(svc.Namespace) == key.Namespace
 			})
 			if idx >= 0 {
-				services = append(services, serviceSet.Spec.Services[idx])
+				services = append(services, makeService(s, s.Version, s.Template))
 			}
 			continue
 		}
