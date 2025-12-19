@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/validation"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kcmv1 "github.com/K0rdent/kcm/api/v1beta1"
@@ -35,6 +37,18 @@ var (
 func ServicesHaveValidTemplates(ctx context.Context, cl client.Client, services []kcmv1.Service, ns string) error {
 	var errs error
 	for _, svc := range services {
+		if svc.Namespace != "" {
+			for _, msg := range validation.ValidateNamespaceName(svc.Namespace, false) {
+				errs = errors.Join(errs, field.Invalid(field.NewPath("namespace"), svc.Namespace, msg))
+			}
+		}
+
+		if svc.Name != "" {
+			for _, msg := range validation.ValidateNamespaceName(svc.Name, false) {
+				errs = errors.Join(errs, field.Invalid(field.NewPath("name"), svc.Name, msg))
+			}
+		}
+
 		errs = errors.Join(errs, validateServiceTemplate(ctx, cl, svc, ns))
 		if svc.TemplateChain == "" {
 			continue
