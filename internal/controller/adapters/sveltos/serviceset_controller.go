@@ -61,6 +61,7 @@ import (
 )
 
 const (
+	defaultTier             = 100
 	sveltosDriftIgnorePatch = `- op: add
   path: /metadata/annotations/projectsveltos.io~1driftDetectionIgnore
   value: ok`
@@ -442,8 +443,9 @@ func (*ServiceSetReconciler) createOrUpdateProfile(ctx context.Context, rgnClien
 		if err = rgnClient.Create(ctx, profile); err != nil {
 			return fmt.Errorf("failed to create Profile for ServiceSet %s: %w", serviceSet.Name, err)
 		}
-	// if profile spec is not equal to the spec we just created,
-	// we need to update it
+	// If profile spec is not equal to the spec we just created so
+	// we need to update it. Make sure that the empty values in `spec`
+	// are defaulted otherwise comparison will always return false.
 	case annotationsUpdated || !equality.Semantic.DeepEqual(profile.Spec, *spec):
 		profile.OwnerReferences = []metav1.OwnerReference{*ownerReference}
 		profile.Spec = *spec
@@ -481,8 +483,9 @@ func (*ServiceSetReconciler) createOrUpdateClusterProfile(ctx context.Context, r
 		if err = rgnClient.Create(ctx, profile); err != nil {
 			return fmt.Errorf("failed to create ClusterProfile for ServiceSet %s: %w", serviceSet.Name, err)
 		}
-	// if profile spec is not equal to the spec we just created,
-	// we need to update it
+	// If profile spec is not equal to the spec we just created so
+	// we need to update it. Make sure that the empty values in `spec`
+	// are defaulted otherwise comparison will always return false.
 	case annotationsUpdated || !equality.Semantic.DeepEqual(profile.Spec, *spec):
 		profile.OwnerReferences = []metav1.OwnerReference{*ownerReference}
 		profile.Spec = *spec
@@ -599,6 +602,7 @@ func (r *ServiceSetReconciler) profileSpec(ctx context.Context, rgnClient client
 	spec.HelmCharts = helmCharts
 	spec.KustomizationRefs = kustomizationRefs
 	spec.PolicyRefs = append(spec.PolicyRefs, policyRefs...)
+	applyProfileSpecDefaults(spec)
 	return spec, nil
 }
 
@@ -1223,7 +1227,7 @@ func buildProfileSpec(config *apiextv1.JSON) (*addoncontrollerv1beta1.Spec, erro
 		return nil, fmt.Errorf("failed to unmarshal raw config to profile configuration: %w", err)
 	}
 
-	tier, err := priorityToTier(ptr.Deref(params.Priority, int32(100)))
+	tier, err := priorityToTier(ptr.Deref(params.Priority, int32(defaultTier)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert priority to tier: %w", err)
 	}
@@ -1250,7 +1254,44 @@ func buildProfileSpec(config *apiextv1.JSON) (*addoncontrollerv1beta1.Spec, erro
 			Patch:  sveltosDriftIgnorePatch,
 		})
 	}
+
 	return spec, nil
+}
+
+// applyProfileSpecDefaults applies defaults to fields that have not been set.
+// When comparing specs to decide whether to reconcile or not, we compare this
+// spec to the spec fetched from kube which already has the defaults applied to it.
+// Therefore, we use this func to apply defaults so that the comparison is accurate.
+//
+// TODO: Maybe we can implement a more generic way of applying the defaults
+// by either fetching the Sveltos Profile CRD and getting the defaults from
+// it or from the JSON schema for Profile once the following is implemented:
+// https://github.com/k0rdent/kcm/issues/2234
+func applyProfileSpecDefaults(spec *addoncontrollerv1beta1.Spec) {
+	if spec.SyncMode == "" {
+		spec.SyncMode = addoncontrollerv1beta1.SyncModeContinuous
+	}
+	if spec.Tier == 0 {
+		spec.Tier = defaultTier
+	}
+	if spec.StopMatchingBehavior == "" {
+		spec.StopMatchingBehavior = addoncontrollerv1beta1.WithdrawPolicies
+	}
+	for i := range spec.PolicyRefs {
+		if spec.PolicyRefs[i].DeploymentType == "" {
+			spec.PolicyRefs[i].DeploymentType = addoncontrollerv1beta1.DeploymentTypeRemote
+		}
+	}
+	for i := range spec.HelmCharts {
+		if spec.HelmCharts[i].HelmChartAction == "" {
+			spec.HelmCharts[i].HelmChartAction = addoncontrollerv1beta1.HelmChartActionInstall
+		}
+	}
+	for i := range spec.KustomizationRefs {
+		if spec.KustomizationRefs[i].DeploymentType == "" {
+			spec.KustomizationRefs[i].DeploymentType = addoncontrollerv1beta1.DeploymentTypeRemote
+		}
+	}
 }
 
 // priorityToTier converts priority value to Sveltos tier value.
