@@ -207,18 +207,18 @@ jobs:
       REGISTRY_REPO: oci://ghcr.io/zerospiel/hmc/charts-ci
     steps:
       - name: Checkout repository
-        if: ${{ needs.authorize.outputs.public_repo == 'true' }}
+        # if: ${{ needs.authorize.outputs.public_repo == 'true' }}
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ needs.lint-test.outputs.pr_merge_commit }}
 
       - name: Set up Buildx
-        if: ${{ needs.authorize.outputs.public_repo == 'true' }}
+        # if: ${{ needs.authorize.outputs.public_repo == 'true' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
-        if: ${{ needs.authorize.outputs.public_repo == 'true' }}
+        # if: ${{ needs.authorize.outputs.public_repo == 'true' }}
         uses: docker/login-action@v3.6.0
         with:
           registry: ghcr.io
@@ -226,11 +226,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Go and Cache
-        if: ${{ needs.authorize.outputs.public_repo == 'true' }}
+        # if: ${{ needs.authorize.outputs.public_repo == 'true' }}
         uses: ./.github/actions/setup-go-cache
 
       - name: Build and push KCM controller image to the public repository
-        if: ${{ needs.authorize.outputs.public_repo == 'true' }}
+        # if: ${{ needs.authorize.outputs.public_repo == 'true' }}
         uses: goreleaser/goreleaser-action@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -246,12 +246,12 @@ jobs:
           version: '~> v2'
           args: release --clean --verbose --skip=validate
 
-      - name: Prepare and push KCM template charts to the public repository
-        if: ${{ needs.authorize.outputs.public_repo == 'true' }}
-        shell: bash
-        run: |
-          make kcm-chart-release
-          make helm-push
+      # - name: Prepare and push KCM template charts to the public repository
+      #   if: ${{ needs.authorize.outputs.public_repo == 'true' }}
+      #   shell: bash
+      #   run: |
+      #     make kcm-chart-release
+      #     make helm-push
 
   provider-cloud-e2etest:
     name: E2E Cloud Providers
