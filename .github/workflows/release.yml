@@ -77,7 +77,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REGISTRY: ghcr.io/k0rdent/kcm
+          REGISTRY: ghcr.io/zerospiel/hmc
           IMAGE_NAME: controller
           TELEMETRY_IMAGE_NAME: telemetry
           VERSION: ${{ steps.version.outputs.version }}
@@ -90,5 +90,5 @@ jobs:
       - name: Prepare KCM chart
         run: VERSION="${{ steps.version.outputs.version }}" make kcm-chart-release
 
-      - name: Push charts to GHCR
-        run: VERSION="${{ steps.version.outputs.version }}" REGISTRY_REPO="oci://ghcr.io/k0rdent/kcm/charts" make helm-push
+      # - name: Push charts to GHCR
+      #   run: VERSION="${{ steps.version.outputs.version }}" REGISTRY_REPO="oci://ghcr.io/zerospiel/hmc/charts" make helm-push

@@ -53,7 +53,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REGISTRY: ghcr.io/k0rdent/kcm/staging
+          REGISTRY: ghcr.io/zerospiel/hmc/staging
           IMAGE_NAME: controller
           TELEMETRY_IMAGE_NAME: telemetry
           VERSION: ${{ steps.version.outputs.version }}
@@ -65,10 +65,10 @@ jobs:
 
       - name: Prepare and push KCM template charts to the public repository
         env:
-          REGISTRY_REPO: oci://ghcr.io/k0rdent/kcm/staging
+          REGISTRY_REPO: oci://ghcr.io/zerospiel/hmc/staging
           VERSION: ${{ steps.version.outputs.version }}
-          IMG: ghcr.io/k0rdent/kcm/staging/controller:${{ steps.version.outputs.version }}
-          IMG_TELEMETRY: ghcr.io/k0rdent/kcm/staging/telemetry:${{ steps.version.outputs.version }}
+          IMG: ghcr.io/zerospiel/hmc/staging/controller:${{ steps.version.outputs.version }}
+          IMG_TELEMETRY: ghcr.io/zerospiel/hmc/staging/telemetry:${{ steps.version.outputs.version }}
         run: |
           make set-kcm-repo
           make kcm-chart-release
