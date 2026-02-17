@@ -361,6 +361,7 @@ func makeService(s kcmv1.Service, version, template string) kcmv1.ServiceWithVal
 		Values:      s.Values,
 		ValuesFrom:  s.ValuesFrom,
 		HelmOptions: s.HelmOptions,
+		HelmAction:  s.HelmAction,
 	}
 }
 
@@ -607,6 +608,7 @@ func needsUpdate(
 			Values:      s.Values,
 			ValuesFrom:  s.ValuesFrom,
 			HelmOptions: s.HelmOptions,
+			HelmAction:  s.HelmAction,
 			Version:     s.Version,
 		}
 	}
@@ -626,6 +628,7 @@ func needsUpdate(
 			ValuesFrom:  s.ValuesFrom,
 			HelmOptions: s.HelmOptions,
 			Version:     &s.Version,
+			HelmAction:  s.HelmAction,
 		}
 	}
 
