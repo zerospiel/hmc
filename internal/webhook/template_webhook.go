@@ -219,7 +219,7 @@ func (v *ProviderTemplateValidator) ValidateDelete(ctx context.Context, obj *kcm
 		}
 		return nil, err
 	}
-	if slices.Contains(mgmt.Templates(), obj.Name) {
+	if mgmt.DeletionTimestamp.IsZero() && slices.Contains(mgmt.Templates(), obj.Name) {
 		return admission.Warnings{fmt.Sprintf("The ProviderTemplate %s cannot be removed while it is used in the Management spec",
 			obj.Name)}, errTemplateDeletionForbidden
 	}
