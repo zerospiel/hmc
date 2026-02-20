@@ -450,10 +450,12 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
+// TODO: FIXME: pass meaningful non-empty action
 func (*Reconciler) eventf(region *kcmv1.Region, reason, message string, args ...any) {
-	record.Eventf(region, region.Generation, reason, message, args...)
+	record.Eventf(region, nil, reason, "Reconcile", message, args...)
 }
 
+// TODO: FIXME: pass meaningful non-empty action
 func (*Reconciler) warnf(region *kcmv1.Region, reason, message string, args ...any) {
-	record.Warnf(region, region.Generation, reason, message, args...)
+	record.Warnf(region, nil, reason, "Reconcile", message, args...)
 }
