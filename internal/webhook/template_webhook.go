@@ -155,12 +155,15 @@ func (v *ServiceTemplateValidator) ValidateDelete(ctx context.Context, obj *kcmv
 			return nil, err
 		}
 
-		if len(multiSvcClusters.Items) > 0 {
-			mscNames := make([]string, len(multiSvcClusters.Items))
-			for i, msc := range multiSvcClusters.Items {
-				mscNames[i] = msc.Name
+		mcsNames := make([]string, 0, len(multiSvcClusters.Items))
+		for _, msc := range multiSvcClusters.Items {
+			if msc.GetDeletionTimestamp().IsZero() {
+				mcsNames = append(mcsNames, msc.Name)
 			}
-			return admission.Warnings{fmt.Sprintf("The %s ServiceTemplate object can't be removed if MultiClusterService objects [%s] referencing it still exist", obj.Name, strings.Join(mscNames, ","))}, errTemplateDeletionForbidden
+		}
+
+		if len(mcsNames) > 0 {
+			return admission.Warnings{fmt.Sprintf("The %s ServiceTemplate object can't be removed if MultiClusterService objects [%s] referencing it still exist", obj.Name, strings.Join(mcsNames, ","))}, errTemplateDeletionForbidden
 		}
 	}
 
