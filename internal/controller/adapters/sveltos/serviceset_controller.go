@@ -40,7 +40,6 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/json"
-	"k8s.io/client-go/util/retry"
 	clusterapiv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -417,91 +416,82 @@ func (r *ServiceSetReconciler) ensureProfile(ctx context.Context, rgnClient clie
 
 func (*ServiceSetReconciler) createOrUpdateProfile(ctx context.Context, rgnClient client.Client, serviceSet *kcmv1.ServiceSet, spec *addoncontrollerv1beta1.Spec) error {
 	ownerReference := metav1.NewControllerRef(serviceSet, kcmv1.GroupVersion.WithKind(kcmv1.ServiceSetKind))
-	retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		profile := new(addoncontrollerv1beta1.Profile)
-		key := client.ObjectKeyFromObject(serviceSet)
-		err := rgnClient.Get(ctx, key, profile)
-		// if IgnoreNotFound returns non-nil error, this means that
-		// an error occurred while trying to request kube-apiserver
-		if client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("failed to get Profile: %w", err)
+
+	profile := new(addoncontrollerv1beta1.Profile)
+	key := client.ObjectKeyFromObject(serviceSet)
+	err := rgnClient.Get(ctx, key, profile)
+	// if IgnoreNotFound returns non-nil error, this means that
+	// an error occurred while trying to request kube-apiserver
+	if client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("failed to get Profile: %w", err)
+	}
+
+	annotationsUpdated := handlePauseAnnotations(&profile.ObjectMeta, serviceSet)
+
+	switch {
+	// we already excluded all errors except NotFound
+	// hence if the error is not nil, it means that the object was not found
+	case err != nil:
+		profile.Name = serviceSet.Name
+		profile.Namespace = serviceSet.Namespace
+		profile.Labels = map[string]string{
+			kcmv1.KCMManagedLabelKey: kcmv1.KCMManagedLabelValue,
 		}
-
-		annotationsUpdated := handlePauseAnnotations(&profile.ObjectMeta, serviceSet)
-
-		switch {
-		// we already excluded all errors except NotFound
-		// hence if the error is not nil, it means that the object was not found
-		case err != nil:
-			profile.Name = serviceSet.Name
-			profile.Namespace = serviceSet.Namespace
-			profile.Labels = map[string]string{
-				kcmv1.KCMManagedLabelKey: kcmv1.KCMManagedLabelValue,
-			}
-			profile.OwnerReferences = []metav1.OwnerReference{*ownerReference}
-			profile.Spec = *spec
-			if err = rgnClient.Create(ctx, profile); err != nil {
-				return fmt.Errorf("failed to create Profile for ServiceSet %s: %w", serviceSet.Name, err)
-			}
-		// If profile spec is not equal to the spec we just created so
-		// we need to update it. Make sure that the empty values in `spec`
-		// are defaulted otherwise comparison will always return false.
-		case annotationsUpdated || !equality.Semantic.DeepEqual(profile.Spec, *spec):
-			profile.OwnerReferences = []metav1.OwnerReference{*ownerReference}
-			profile.Spec = *spec
-			return rgnClient.Update(ctx, profile)
+		profile.OwnerReferences = []metav1.OwnerReference{*ownerReference}
+		profile.Spec = *spec
+		if err = rgnClient.Create(ctx, profile); err != nil {
+			return fmt.Errorf("failed to create Profile for ServiceSet %s: %w", serviceSet.Name, err)
 		}
-		return nil
-	})
-
-	if retryErr != nil {
-		return fmt.Errorf("failed to update Profile for ServiceSet %s: %w", serviceSet.Name, retryErr)
+	// If profile spec is not equal to the spec we just created so
+	// we need to update it. Make sure that the empty values in `spec`
+	// are defaulted otherwise comparison will always return false.
+	case annotationsUpdated || !equality.Semantic.DeepEqual(profile.Spec, *spec):
+		profile.OwnerReferences = []metav1.OwnerReference{*ownerReference}
+		profile.Spec = *spec
+		if err = rgnClient.Update(ctx, profile); err != nil {
+			return fmt.Errorf("failed to update Profile for ServiceSet %s: %w", serviceSet.Name, err)
+		}
 	}
 	return nil
 }
 
 func (*ServiceSetReconciler) createOrUpdateClusterProfile(ctx context.Context, rgnClient client.Client, serviceSet *kcmv1.ServiceSet, spec *addoncontrollerv1beta1.Spec) error {
 	ownerReference := metav1.NewControllerRef(serviceSet, kcmv1.GroupVersion.WithKind(kcmv1.ServiceSetKind))
-	retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		profile := new(addoncontrollerv1beta1.ClusterProfile)
-		key := client.ObjectKeyFromObject(serviceSet)
-		err := rgnClient.Get(ctx, key, profile)
-		// if IgnoreNotFound returns non-nil error, this means that
-		// an error occurred while trying to request kube-apiserver
-		if client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("failed to get Profile: %w", err)
-		}
 
-		annotationsUpdated := handlePauseAnnotations(&profile.ObjectMeta, serviceSet)
-
-		switch {
-		// we already excluded all errors except NotFound
-		// hence if the error is not nil, it means that the object was not found
-		case err != nil:
-			profile.Name = serviceSet.Name
-			profile.Labels = map[string]string{
-				kcmv1.KCMManagedLabelKey: kcmv1.KCMManagedLabelValue,
-			}
-			profile.OwnerReferences = []metav1.OwnerReference{*ownerReference}
-			profile.Spec = *spec
-			if err = rgnClient.Create(ctx, profile); err != nil {
-				return fmt.Errorf("failed to create ClusterProfile for ServiceSet %s: %w", serviceSet.Name, err)
-			}
-		// If profile spec is not equal to the spec we just created so
-		// we need to update it. Make sure that the empty values in `spec`
-		// are defaulted otherwise comparison will always return false.
-		case annotationsUpdated || !equality.Semantic.DeepEqual(profile.Spec, *spec):
-			profile.OwnerReferences = []metav1.OwnerReference{*ownerReference}
-			return rgnClient.Update(ctx, profile)
-		}
-
-		return err
-	})
-
-	if retryErr != nil {
-		return fmt.Errorf("failed to update ClusterProfile for ServiceSet %s: %w", serviceSet.Name, retryErr)
+	profile := new(addoncontrollerv1beta1.ClusterProfile)
+	key := client.ObjectKeyFromObject(serviceSet)
+	err := rgnClient.Get(ctx, key, profile)
+	// if IgnoreNotFound returns non-nil error, this means that
+	// an error occurred while trying to request kube-apiserver
+	if client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("failed to get Profile: %w", err)
 	}
 
+	annotationsUpdated := handlePauseAnnotations(&profile.ObjectMeta, serviceSet)
+
+	switch {
+	// we already excluded all errors except NotFound
+	// hence if the error is not nil, it means that the object was not found
+	case err != nil:
+		profile.Name = serviceSet.Name
+		profile.Labels = map[string]string{
+			kcmv1.KCMManagedLabelKey: kcmv1.KCMManagedLabelValue,
+		}
+		profile.OwnerReferences = []metav1.OwnerReference{*ownerReference}
+		profile.Spec = *spec
+		if err = rgnClient.Create(ctx, profile); err != nil {
+			return fmt.Errorf("failed to create ClusterProfile for ServiceSet %s: %w", serviceSet.Name, err)
+		}
+	// If profile spec is not equal to the spec we just created so
+	// we need to update it. Make sure that the empty values in `spec`
+	// are defaulted otherwise comparison will always return false.
+	case annotationsUpdated || !equality.Semantic.DeepEqual(profile.Spec, *spec):
+		profile.OwnerReferences = []metav1.OwnerReference{*ownerReference}
+		profile.Spec = *spec
+		if err = rgnClient.Update(ctx, profile); err != nil {
+			return fmt.Errorf("failed to update ClusterProfile for ServiceSet %s: %w", serviceSet.Name, err)
+		}
+	}
 	return nil
 }
 
