@@ -20,8 +20,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime"
+	"sync"
 
-	fluxmeta "github.com/fluxcd/pkg/apis/meta"
 	"github.com/hashicorp/go-retryablehttp"
 	godigest "github.com/opencontainers/go-digest"
 	"helm.sh/helm/v3/pkg/chart"
@@ -29,14 +30,34 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-func DownloadChartFromArtifact(ctx context.Context, artifact *fluxmeta.Artifact) (*chart.Chart, error) {
-	return DownloadChart(ctx, artifact.URL, artifact.Digest)
+var (
+	httpClient     *retryablehttp.Client
+	httpClientOnce sync.Once
+)
+
+func getHTTPClient() *retryablehttp.Client {
+	httpClientOnce.Do(func() {
+		httpClient = retryablehttp.NewClient()
+		// Since we were OOMing due to high number of connections,
+		// increased idle connections limit should also help to save
+		// mem from calling net/http.dialConn.
+		// default values are:
+		// MaxIdleConns = 100
+		// MaxIdleConnsPerHost = runtime.GOMAXPROCS(0) + 1
+		if transport, ok := httpClient.HTTPClient.Transport.(*http.Transport); ok {
+			// we'll instead ensure global limit accommodates per-host default
+			maxProcs := runtime.GOMAXPROCS(0)
+			transport.MaxIdleConnsPerHost = maxProcs + 1
+			transport.MaxIdleConns = (maxProcs + 1) * 10 // support ~10 hosts
+		}
+	})
+	return httpClient
 }
 
 func DownloadChart(ctx context.Context, chartURL, digest string) (*chart.Chart, error) {
 	l := log.FromContext(ctx, "chart", chartURL)
 
-	client := retryablehttp.NewClient()
+	client := getHTTPClient()
 	req, err := retryablehttp.NewRequestWithContext(ctx, http.MethodGet, chartURL, nil)
 	if err != nil {
 		return nil, err
