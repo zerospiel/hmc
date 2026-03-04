@@ -57,6 +57,17 @@ const (
 	// ServiceSetProfileReadyMessage is the message for the profile is ready
 	ServiceSetProfileReadyMessage = "Profile is ready"
 
+	// ServiceSetStatusesCollectedCondition is the condition type for ServiceSet statuses collection
+	ServiceSetStatusesCollectedCondition = "ServiceSetStatusesCollected"
+	// ServiceSetStatusesCollectedReason is the reason for the statuses collection is ready
+	ServiceSetStatusesCollectedReason = "ServiceSetStatusesCollected"
+	// ServiceSetStatusesCollectedMessage is the message for the statuses collection is ready
+	ServiceSetStatusesCollectedMessage = "Statuses collected"
+	// ServiceSetStatusesNotCollectedReason is the reason for the statuses collection is not ready
+	ServiceSetStatusesNotCollectedReason = "ServiceSetStatusesNotCollected"
+	// ServiceSetStatusesNotCollectedMessage is the message for the statuses collection is not ready
+	ServiceSetStatusesNotCollectedMessage = "Statuses not collected"
+
 	// ServiceSetProfileBuildFailedReason is the reason for the profile build failed
 	ServiceSetProfileBuildFailedReason = "ServiceSetProfileBuildFailed"
 	// ServiceSetHelmChartsBuildFailedReason is the reason for the Helm charts build failed
@@ -78,8 +89,18 @@ const (
 	ServiceSetEnsureProfileFailedEvent = "ServiceSetEnsureProfileFailed"
 	// ServiceSetEnsureProfileSuccessEvent indicates the event for Profile create or update succeeded
 	ServiceSetEnsureProfileSuccessEvent = "ServiceSetEnsureProfileSuccess"
+	// ServiceSetCollectServiceStatusesSuccessEvent indicates the event for services status collection succeeded
+	ServiceSetCollectServiceStatusesSuccessEvent = "ServiceSetCollectServiceStatusesSuccess"
 	// ServiceSetCollectServiceStatusesFailedEvent indicates the event for services status collection failed
 	ServiceSetCollectServiceStatusesFailedEvent = "ServiceSetCollectServiceStatusesFailed"
+
+	ServiceSetReconcileEventAction              = "Reconcile"
+	ServiceSetEnsureProfileEventAction          = "EnsureProfile"
+	ServiceSetBuildProfileEventAction           = "BuildProfile"
+	ServiceSetBuildHelmChartsEventAction        = "BuildHelmCharts"
+	ServiceSetBuildKustomizationRefsEventAction = "BuildKustomizationRefs"
+	ServiceSetBuildPolicyRefsEventAction        = "BuildPolicyRefs"
+	ServiceSetCollectServiceStatusesEventAction = "CollectServiceStatuses"
 
 	// ServiceSetIsBeingDeletedEvent indicates the event for services set being deleted.
 	ServiceSetIsBeingDeletedEvent = "ServiceSetIsBeingDeleted"
