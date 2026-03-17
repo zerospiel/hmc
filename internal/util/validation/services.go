@@ -173,42 +173,51 @@ func validateServiceDependencyCycle(services []kcmv1.Service) error {
 		}
 	}
 
-	for key := range dependsOnMap {
-		if err := hasDependencyCycle(key, nil, dependsOnMap); err != nil {
-			return err
+	// We want to block the create/update/reconciliation of the
+	// CD or MCS if even one of the defined services has a cycle,
+	// therefore we use hasCycle instead hasCycleFrom func to traverse
+	// the entire services dependency graph to look for a cycle.
+	return hasCycle(dependsOnMap)
+}
+
+// hasCycle uses DFS to check for cycles in the entire
+// dependency graph and returns on the first occurrence of a cycle.
+func hasCycle(graph map[client.ObjectKey][]client.ObjectKey) error {
+	visited := make(map[client.ObjectKey]bool)
+	inStack := make(map[client.ObjectKey]bool)
+
+	for key := range graph {
+		if !visited[key] {
+			if err := dfs(key, visited, inStack, graph); err != nil {
+				return err
+			}
 		}
 	}
 
 	return nil
 }
 
-// hasDependencyCycle uses DFS to check for cycles in the
-// dependency graph and returns on the first occurrence of a cycle.
-func hasDependencyCycle(key client.ObjectKey, visited map[client.ObjectKey]bool, dependsOnMap map[client.ObjectKey][]client.ObjectKey) error {
-	if visited == nil {
-		visited = make(map[client.ObjectKey]bool)
+// dfs performs a depth-first-search of the graph from provided node
+// and returns on first occurrence of a cycle within the sub-graph.
+func dfs(node client.ObjectKey, visited, inStack map[client.ObjectKey]bool, graph map[client.ObjectKey][]client.ObjectKey) error {
+	if inStack[node] {
+		// We have encountered a node that is already in the current DFS path.
+		return fmt.Errorf("dependency cycle detected at %s", node.String())
 	}
-
-	// Add current to visited.
-	visited[key] = true
-
-	dependsOn, ok := dependsOnMap[key]
-	if !ok {
+	if visited[node] {
+		// Already fully explored this node without finding a cycle on this path.
 		return nil
 	}
+	visited[node] = true
+	inStack[node] = true
 
-	for _, d := range dependsOn {
-		if _, ok := visited[d]; ok {
-			// No need to check other dependants because cycle was detected.
-			return fmt.Errorf("dependency cycle detected from %s to %s", key, d)
-		}
-
-		if err := hasDependencyCycle(d, visited, dependsOnMap); err != nil {
+	for _, d := range graph[node] {
+		if err := dfs(d, visited, inStack, graph); err != nil {
 			return err
 		}
 	}
 
-	// Remove current from visited.
-	visited[key] = false
+	// Remove current key from current path before backtracking.
+	inStack[node] = false
 	return nil
 }
