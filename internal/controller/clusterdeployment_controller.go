@@ -1820,7 +1820,7 @@ func (r *ClusterDeploymentReconciler) createOrUpdateServiceSet(
 		ObjectKey:            client.ObjectKeyFromObject(cd),
 		Services:             cd.Spec.ServiceSpec.Services,
 		ProviderSpec:         providerSpec,
-		PropagateCredentials: cd.Spec.PropagateCredentials,
+		PropagateCredentials: cd.Spec.PropagateCredentials != nil && *cd.Spec.PropagateCredentials,
 	}
 
 	serviceSet, op, err := serviceset.GetServiceSetWithOperation(ctx, r.MgmtClient, opRequisites)
