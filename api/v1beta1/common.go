@@ -29,6 +29,9 @@ const (
 	// resource or an action has started.
 	ProgressingReason string = "Progressing"
 
+	// DeletingReason indicates a condition or event for the deletion of the object.
+	DeletingReason string = "Deleting"
+
 	// NotPausedReason appears when an object is not paused.
 	NotPausedReason = "NotPaused"
 
