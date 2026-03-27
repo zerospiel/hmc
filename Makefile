@@ -139,8 +139,10 @@ update-dev-confs: yq
 capo-orc-fetch: CAPO_DIR := $(PROVIDER_TEMPLATES_DIR)/cluster-api-provider-openstack
 capo-orc-fetch: CAPO_ORC_VERSION := 2.1.0
 capo-orc-fetch: CAPO_ORC_TEMPLATE := "$(CAPO_DIR)/templates/orc.yaml"
-capo-orc-fetch:
+capo-orc-fetch: yq
 	@curl -L --fail -s https://github.com/k-orc/openstack-resource-controller/releases/download/v$(CAPO_ORC_VERSION)/install.yaml | \
+	$(YQ) 'del(select(.kind == "Namespace"))' | \
+	$(YQ) '(select(.metadata.namespace) | .metadata.namespace) = "{{ .Release.Namespace }}"' | \
 	awk 'NR==1{print "{{- $$global := .Values.global | default dict }}"} \
 	{ \
 	  if ($$0 ~ /controller-gen.kubebuilder.io\/version/) { \
@@ -156,18 +158,18 @@ capo-orc-fetch:
 	    for(i=2;i<=length(arr);i++) { \
 	      image_path = image_path ((i>2)?"/":"") arr[i]; \
 	    } \
-	    print "        image: {{ default \"" registry "\" $$global.registry }}/" image_path; \
+	    print "          image: {{ default \"" registry "\" $$global.registry }}/" image_path; \
 	    next; \
 	  } \
 \
 	  print; \
 \
 	  if ($$0 ~ /^[ \t]*name: manager$$/) { \
-	    print "        {{- $$proxyEnv := include \"infrastructureProvider.proxyEnv\" . | fromYaml }}"; \
-	    print "        {{- if $$proxyEnv }}"; \
-	    print "        env:"; \
-	    print "        {{ toYaml $$proxyEnv.env | nindent 8 }}"; \
-	    print "        {{- end }}"; \
+	    print "          {{- $$proxyEnv := include \"infrastructureProvider.proxyEnv\" . | fromYaml }}"; \
+	    print "          {{- if $$proxyEnv }}"; \
+	    print "          env:"; \
+	    print "          {{ toYaml $$proxyEnv.env | nindent 12 }}"; \
+	    print "          {{- end }}"; \
 	  } \
 \
 	  if ($$0 ~ /serviceAccountName: orc-controller-manager/) { \

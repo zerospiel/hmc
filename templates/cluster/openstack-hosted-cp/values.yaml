@@ -13,6 +13,15 @@ clusterNetwork:  # @schema description: The cluster network configuration; type:
 clusterLabels: {} # @schema description: Labels to apply to the cluster; type: object; additionalProperties: true
 clusterAnnotations: {} # @schema description: Annotations to apply to the cluster; type: object; additionalProperties: true
 
+ingress: # @schema description: Ingress configuration for control plane access via management or regional cluster load balancer; type: object
+  enabled: false # @schema description: Enable ingress for control plane access (requires k0s v1.34.1+k0s.0 or later); type: boolean
+  className: "haproxy" # @schema description: Ingress class name (must support SSL passthrough, e.g., haproxy, nginx, traefik); type: string
+  apiHost: "" # @schema description: Hostname for Kubernetes API (e.g., kube-api.example.com). Required when ingress is enabled; type: string
+  konnectivityHost: "" # @schema description: Hostname for konnectivity server (e.g., konnectivity.example.com). Required when ingress is enabled; type: string
+  port: 443 # @schema description: The port used by the ingress controller; type: integer; minimum: 1; maximum: 65535
+  annotations: # @schema description: Ingress annotations (must include SSL passthrough annotation); type: object; additionalProperties: true
+    haproxy.org/ssl-passthrough: "true"
+
 ccmRegional: true # @schema description: Allow OpenStack CCM to set ProviderID with region name; type: boolean
 
 clusterIdentity: # @schema description: The OpenStack credentials secret reference, auto-populated; type: object; required: true
@@ -94,7 +103,7 @@ k0smotron: # @schema description: K0smotron parameters; type: object
 
 # K0s parameters
 k0s: # @schema description: K0s parameters; type: object
-  version: v1.32.8+k0s.0 # @schema description: K0s version; type: string; required: true
+  version: v1.35.1+k0s.1 # @schema description: K0s version; type: string; required: true
   arch: amd64 # @schema description: K0s Download URL Arch; type: string; enum: amd64, arm64, arm; default: amd64
   workerArgs: [] # @schema description: Args specifies extra arguments to be passed to k0s worker. See: https://docs.k0sproject.io/stable/worker-node-config/ See: https://docs.k0sproject.io/stable/cli/k0s_worker/; type: array; item: string; uniqueItems: true
   api: # @schema description: Kubernetes API server parameters; type: object

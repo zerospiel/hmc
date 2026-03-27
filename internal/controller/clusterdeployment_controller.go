@@ -93,11 +93,12 @@ type clusterDeletionState struct {
 type ClusterDeploymentReconciler struct {
 	MgmtClient client.Client
 	helmActor
-	SystemNamespace        string
-	GlobalRegistry         string
-	GlobalK0sURL           string
-	K0sURLCertSecretName   string // Name of a Secret with K0s Download URL Root CA with ca.crt key
-	RegistryCertSecretName string // Name of a Secret with Registry Root CA with ca.crt key
+	SystemNamespace           string
+	GlobalRegistry            string
+	GlobalK0sURL              string
+	K0sURLCertSecretName      string // Name of a Secret with K0s Download URL Root CA with ca.crt key
+	RegistryCertSecretName    string // Name of a Secret with Registry Root CA with ca.crt key
+	CldRegistryCredSecretName string
 
 	DefaultHelmTimeout time.Duration
 	defaultRequeueTime time.Duration
@@ -871,6 +872,11 @@ func (r *ClusterDeploymentReconciler) fillHelmValues(scope *clusterScope) error 
 			"registryCertSecret": r.RegistryCertSecretName,
 			"k0sURLCertSecret":   r.K0sURLCertSecretName,
 		}
+
+		if r.CldRegistryCredSecretName != "" {
+			global["registryCredentialSecret"] = r.CldRegistryCredSecretName
+		}
+
 		for _, v := range global {
 			if v != "" {
 				values["global"] = global
@@ -1860,7 +1866,7 @@ func (r *ClusterDeploymentReconciler) processClusterIPAM(ctx context.Context, cd
 }
 
 func (r *ClusterDeploymentReconciler) handleCertificateSecrets(ctx context.Context, rgnClient client.Client, cd *kcmv1.ClusterDeployment) error {
-	secretsToHandle := []string{r.K0sURLCertSecretName, r.RegistryCertSecretName}
+	secretsToHandle := []string{r.K0sURLCertSecretName, r.RegistryCertSecretName, r.CldRegistryCredSecretName}
 
 	l := ctrl.LoggerFrom(ctx).WithName("handle-secrets")
 
@@ -1868,7 +1874,7 @@ func (r *ClusterDeploymentReconciler) handleCertificateSecrets(ctx context.Conte
 		return nil
 	}
 
-	l.V(1).Info("Copying certificate secrets from the system namespace to the ClusterDeployment namespace")
+	l.V(1).Info("Copying certificate secrets and registry secret from the system namespace to the ClusterDeployment namespace")
 	for _, secretName := range secretsToHandle {
 		if err := kubeutil.CopySecret(
 			ctx,
