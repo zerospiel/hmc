@@ -26,6 +26,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kcmv1 "github.com/K0rdent/kcm/api/v1beta1"
+	"github.com/K0rdent/kcm/internal/config"
+	"github.com/K0rdent/kcm/internal/helm"
 	"github.com/K0rdent/kcm/internal/record"
 	releaseutil "github.com/K0rdent/kcm/internal/util/release"
 )
@@ -34,6 +36,7 @@ func Cleanup(
 	ctx context.Context,
 	mgmtClient client.Client,
 	cluster clusterInterface,
+	release *kcmv1.Release,
 	labelSelector *metav1.LabelSelector,
 	namespace string,
 ) error {
@@ -66,6 +69,8 @@ func Cleanup(
 		}
 	}
 
+	kcmChartName := cluster.KCMComponentInfo(release, config.KCMHelmReleaseName()).ChartName
+
 	for _, hr := range managedHelmReleases.Items {
 		// do not remove non-management and non-regional related components (#703)
 		if len(hr.OwnerReferences) > 0 {
@@ -73,13 +78,15 @@ func Cleanup(
 		}
 
 		componentName := hr.Name // providers(components) names map 1-1 to the helmreleases names
-
-		if componentName == cluster.HelmReleaseName(kcmv1.CoreCAPIName) ||
-			componentName == cluster.HelmReleaseName(cluster.KCMHelmChartName()) ||
+		hrPrefix := cluster.HelmReleasePrefix()
+		if componentName == helm.ReleaseName(hrPrefix, kcmv1.CoreCAPIName) ||
+			componentName == helm.ReleaseName(hrPrefix, kcmChartName) ||
 			slices.ContainsFunc(releasesList.Items, func(r metav1.PartialObjectMetadata) bool {
 				return componentName == releaseutil.TemplatesChartFromReleaseName(r.Name)
 			}) ||
-			slices.ContainsFunc(cluster.Components().Providers, func(newComp kcmv1.Provider) bool { return componentName == cluster.HelmReleaseName(newComp.Name) }) {
+			slices.ContainsFunc(cluster.Components().Providers, func(newComp kcmv1.Provider) bool {
+				return componentName == helm.ReleaseName(hrPrefix, newComp.Name)
+			}) {
 			continue
 		}
 

@@ -69,6 +69,16 @@ type Core struct {
 	CAPI Component `json:"capi,omitempty"`
 }
 
+// KCMComponentInfo holds KCM-specific component metadata used during reconciliation.
+type KCMComponentInfo struct {
+	// ChartName is the name of the KCM Helm chart (e.g., "kcm" or "kcm-regional").
+	ChartName string
+	// DefaultTemplate is the default ProviderTemplate name from the Release.
+	DefaultTemplate string
+	// ReleaseName is the Helm release name (spec.releaseName in the HelmRelease).
+	ReleaseName string
+}
+
 // Component represents KCM management or regional component
 type Component struct {
 	// Config allows to provide parameters for management component customization.
@@ -158,19 +168,19 @@ func (in *Management) Components() ComponentsCommonSpec {
 	return in.Spec.ComponentsCommonSpec
 }
 
-// KCMTemplate returns the KCM template reference from the Release object
-func (*Management) KCMTemplate(release *Release) string {
-	return release.Spec.KCM.Template
+// KCMComponentInfo returns the KCM component metadata.
+// The kcmReleaseName parameter should be provided by the controller from its configuration.
+func (*Management) KCMComponentInfo(release *Release, kcmReleaseName string) KCMComponentInfo {
+	return KCMComponentInfo{
+		ChartName:       CoreKCMName,
+		DefaultTemplate: release.Spec.KCM.Template,
+		ReleaseName:     kcmReleaseName,
+	}
 }
 
-// KCMHelmChartName returns the name of the helm chart with core KCM components
-func (*Management) KCMHelmChartName() string {
-	return CoreKCMName
-}
-
-// HelmReleaseName returns the final name of the HelmRelease managed by this object
-func (*Management) HelmReleaseName(chartName string) string {
-	return chartName
+// HelmReleasePrefix returns an empty string since Management HelmReleases don't need a prefix.
+func (*Management) HelmReleasePrefix() string {
+	return ""
 }
 
 // GetComponentsStatus returns the common status for enabled components

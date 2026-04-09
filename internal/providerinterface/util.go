@@ -24,13 +24,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kcmv1 "github.com/K0rdent/kcm/api/v1beta1"
+	"github.com/K0rdent/kcm/internal/helm"
 )
 
 var ErrMissingClusterIdentityRef = errors.New("cluster identity reference is not found")
 
 // clusterParent is a ClusterDeployment parent object, either Management or Region
 type clusterParent interface {
-	HelmReleaseName(string) string
+	HelmReleasePrefix() string
 	GetComponentsStatus() *kcmv1.ComponentsCommonStatus
 }
 
@@ -69,7 +70,7 @@ func FindProviderInterfaceForInfra(ctx context.Context, rgnClient client.Client,
 	// Get the first found ProviderInterface from the <componentName> helm chart
 	providerInterfaces := &kcmv1.ProviderInterfaceList{}
 	if err := rgnClient.List(ctx, providerInterfaces,
-		client.MatchingLabels{kcmv1.FluxHelmChartNameKey: parent.HelmReleaseName(componentName)},
+		client.MatchingLabels{kcmv1.FluxHelmChartNameKey: helm.ReleaseName(parent.HelmReleasePrefix(), componentName)},
 		client.Limit(1)); err != nil {
 		return nil
 	}
