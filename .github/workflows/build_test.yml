@@ -126,8 +126,12 @@ jobs:
             exit 1
           fi
 
-      - name: Setup Go and Cache (with Lint)
-        uses: ./.github/actions/setup-go-cache
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: '**/go.sum'
 
       - name: Verify code style
         shell: bash
@@ -189,8 +193,12 @@ jobs:
       - name: Setup kubectl
         uses: azure/setup-kubectl@v5
 
-      - name: Setup Go and Cache
-        uses: ./.github/actions/setup-go-cache
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: '**/go.sum'
 
       - name: Run E2E tests
         env:
@@ -242,9 +250,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Go and Cache
+      - name: Setup Go
         if: ${{ needs.authorize.outputs.public_repo == 'true' }}
-        uses: ./.github/actions/setup-go-cache
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: '**/go.sum'
 
       - name: Build and push KCM controller image to the public repository
         if: ${{ needs.authorize.outputs.public_repo == 'true' }}
@@ -295,6 +307,7 @@ jobs:
       GCP_PROJECT: k0rdent-ci
       GCP_REGION: us-east4
       PUBLIC_REPO: ${{ needs.authorize.outputs.public_repo == 'true' }}
+      USE_CACHE: 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -354,9 +367,20 @@ jobs:
         if: steps.provider_check.outputs.cloud_present == 'true'
         uses: azure/setup-kubectl@v5
 
-      - name: Setup Go and Cache
-        if: steps.provider_check.outputs.cloud_present == 'true'
-        uses: ./.github/actions/setup-go-cache
+      - name: Setup Go (cache disabled)
+        if: ${{ steps.provider_check.outputs.cloud_present == 'true' && env.USE_CACHE == 'false' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Setup Go (with module cache)
+        if: ${{ steps.provider_check.outputs.cloud_present == 'true' && env.USE_CACHE != 'false' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: '**/go.sum'
 
       - name: Load testing configuration
         if: ${{ steps.provider_check.outputs.cloud_present == 'true' }}
@@ -445,12 +469,13 @@ jobs:
           echo "IMG=ghcr.io/k0rdent/kcm/controller-ci:${{ needs.lint-test.outputs.version }}" >> $GITHUB_ENV
           echo "IMG_TELEMETRY=ghcr.io/k0rdent/kcm/telemetry-ci:${{ needs.lint-test.outputs.version }}" >> $GITHUB_ENV
 
-      - name: Setup Go and Cache
+      - name: Setup Go
         if: steps.provider_check.outputs.onprem_present == 'true'
-        # we do not want to use cache on the self-hosted runner
-        env:
-          USE_CACHE: false
-        uses: ./.github/actions/setup-go-cache
+        # We do not want to use cache on the self-hosted runner.
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
 
       - name: Setup kubectl
         if: steps.provider_check.outputs.onprem_present == 'true'
@@ -501,8 +526,12 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.lint-test.outputs.pr_merge_commit }}
 
-      - name: Setup Go and Cache
-        uses: ./.github/actions/setup-go-cache
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: '**/go.sum'
 
       - name: Nuke AWS and Azure resources
         env:
