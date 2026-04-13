@@ -2,7 +2,7 @@ name: Main Branch Cache Cleanup
 
 on:
   schedule:
-    - cron: '0 3 */5 * *'  # At 03:00 on every 5th day-of-month
+    - cron: '0 3 * * *'  # At 03:00 every day
   workflow_dispatch:
 
 jobs:
@@ -17,7 +17,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           BRANCH: refs/heads/main
-          CUTOFF: 5 days
+          CUTOFF: 2 days
         shell: bash
         run: |
           echo "Fetching cache entries for main branch: $BRANCH"
