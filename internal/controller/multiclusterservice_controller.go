@@ -155,8 +155,8 @@ func (r *MultiClusterServiceReconciler) reconcileUpdate(ctx context.Context, mcs
 	}
 	r.setCondition(mcs, kcmv1.MultiClusterServiceDependencyValidationCondition, nil)
 
-	l.V(1).Info("Cleaning up ServiceSets for ClusterDeployments that are no longer match")
-	if err = r.cleanup(ctx, mcs); err != nil {
+	l.V(1).Info("Cleaning up ServiceSets for ClusterDeployments that no longer match")
+	if err = r.cleanupServiceSets(ctx, mcs); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile cleanup: %w", err)
 	}
 
@@ -170,12 +170,15 @@ func (r *MultiClusterServiceReconciler) reconcileUpdate(ctx context.Context, mcs
 	// if selfManagement flag is set, then we'll need to create serviceSet which does not refer
 	// any clusterDeployment, but also has selfManagement flag set to true.
 	if mcs.Spec.ServiceSpec.Provider.SelfManagement {
+		l.V(1).Info("Ensuring ServiceSet for the management cluster")
 		errs = errors.Join(r.createOrUpdateServiceSet(ctx, mcs, nil))
 	}
 
 	clusters := new(kcmv1.ClusterDeploymentList)
-	if err := r.Client.List(ctx, clusters, client.MatchingLabelsSelector{Selector: selector}); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to list ClusterDeployments: %w", err)
+	if !selector.Empty() {
+		if err := r.Client.List(ctx, clusters, client.MatchingLabelsSelector{Selector: selector}); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to list ClusterDeployments: %w", err)
+		}
 	}
 
 	l.V(1).Info("Matching ClusterDeployments found", "count", len(clusters.Items))
@@ -502,7 +505,7 @@ func (r *MultiClusterServiceReconciler) createOrUpdateServiceSet(
 	return serviceset.NewProcessor(r.Client).CreateOrUpdateServiceSet(ctx, op, serviceSet)
 }
 
-func (r *MultiClusterServiceReconciler) cleanup(ctx context.Context, mcs *kcmv1.MultiClusterService) error {
+func (r *MultiClusterServiceReconciler) cleanupServiceSets(ctx context.Context, mcs *kcmv1.MultiClusterService) error {
 	serviceSets := new(kcmv1.ServiceSetList)
 	// we'll list all ServiceSets which have .spec.multiClusterService defined and match
 	// current MultiClusterService object being reconciled
@@ -528,22 +531,29 @@ func (r *MultiClusterServiceReconciler) cleanup(ctx context.Context, mcs *kcmv1.
 			continue
 		}
 
+		if selector.Empty() {
+			// since selector is empty it will not match any ServiceSet so deleting the
+			// ServiceSet without checking if its ClusterDeployment's labels match the selector
+			if err := r.Client.Delete(ctx, &serviceSet); err != nil {
+				errs = errors.Join(errs, fmt.Errorf("failed to delete ServiceSet %s/%s: %w", serviceSet.Namespace, serviceSet.Name, err))
+			}
+			continue
+		}
+
 		cd := new(kcmv1.ClusterDeployment)
 		key := client.ObjectKey{Namespace: serviceSet.Namespace, Name: serviceSet.Spec.Cluster}
 		if err := r.Client.Get(ctx, key, cd); err != nil {
 			return fmt.Errorf("failed to get ClusterDeployment %s: %w", key.String(), err)
 		}
 
-		// ClusterDeployment labels match selector, skipping
-		if selector.Matches(labels.Set(cd.Labels)) {
-			continue
-		}
-
-		// we want to delete serviceSet since clusterDeployment does not match selector anymore
-		if err := r.Client.Delete(ctx, &serviceSet); err != nil {
-			errs = errors.Join(errs, fmt.Errorf("failed to delete ServiceSet %s: %w", key.String(), err))
+		if !selector.Matches(labels.Set(cd.Labels)) {
+			// delete the ServiceSet since it's ClusterDeployment's labels don't match selector anymore
+			if err := r.Client.Delete(ctx, &serviceSet); err != nil {
+				errs = errors.Join(errs, fmt.Errorf("failed to delete ServiceSet %s/%s: %w", serviceSet.Namespace, serviceSet.Name, err))
+			}
 		}
 	}
+
 	return errs
 }
 
