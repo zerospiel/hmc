@@ -6,7 +6,7 @@ metadata:
     control-plane: {{ include "kcm.fullname" . }}-controller-manager
   {{- include "kcm.labels" . | nindent 4 }}
 spec:
-  type: {{ .Values.metricsService.type }}
+  type: {{ .Values.metricsService.type  | quote }}
   selector:
     control-plane: {{ include "kcm.fullname" . }}-controller-manager
   {{- include "kcm.selectorLabels" . | nindent 4 }}
