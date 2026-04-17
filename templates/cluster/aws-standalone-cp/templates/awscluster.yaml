@@ -7,10 +7,10 @@ metadata:
   finalizers:
     - k0rdent.mirantis.com/cleanup
 spec:
-  region: {{ .Values.region }}
+  region: {{ .Values.region  | quote }}
   identityRef:
-    kind: {{ .Values.clusterIdentity.kind }}
-    name: {{ .Values.clusterIdentity.name }}
+    kind: {{ .Values.clusterIdentity.kind  | quote }}
+    name: {{ .Values.clusterIdentity.name  | quote }}
   controlPlaneLoadBalancer:
     healthCheckProtocol: TCP
   network:

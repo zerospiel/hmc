@@ -12,4 +12,4 @@ metadata:
   {{- end }}
 spec:
   consecutiveFailureThreshold: {{ .Values.consecutiveFailureThreshold }}
-  kubeconfigName: {{ .Values.clusterIdentity.name }}
+  kubeconfigName: {{ .Values.clusterIdentity.name  | quote }}

@@ -7,14 +7,14 @@ spec:
     spec:
       {{- if not (quote .Values.amiID | empty) }}
       ami:
-        id: {{ .Values.amiID }}
+        id: {{ .Values.amiID  | quote }}
       {{- end }}
-      imageLookupFormat: {{ .Values.imageLookup.format }}
+      imageLookupFormat: {{ .Values.imageLookup.format  | quote }}
       imageLookupOrg: "{{ .Values.imageLookup.org }}"
-      imageLookupBaseOS: {{ .Values.imageLookup.baseOS }}
-      instanceType: {{ .Values.instanceType }}
+      imageLookupBaseOS: {{ .Values.imageLookup.baseOS  | quote }}
+      instanceType: {{ .Values.instanceType  | quote }}
       # Instance Profile created by `clusterawsadm bootstrap iam create-cloudformation-stack`
-      iamInstanceProfile: {{ .Values.iamInstanceProfile }}
+      iamInstanceProfile: {{ .Values.iamInstanceProfile  | quote }}
       cloudInit:
         # Makes CAPA use k0s bootstrap cloud-init directly and not via SSM
         # Simplifies the VPC setup as we do not need custom SSM endpoints etc.

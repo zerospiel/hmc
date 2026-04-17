@@ -19,7 +19,7 @@ spec:
           kind: K0sWorkerConfigTemplate
           name: {{ include "k0sworkerconfigtemplate.name" . }}
       clusterName: {{ include "cluster.name" . }}
-      version: {{ (split "+" .Values.k0s.version)._0 }}
+      version: {{ (split "+" .Values.k0s.version)._0  | quote }}
       infrastructureRef:
         apiGroup: infrastructure.cluster.x-k8s.io
         kind: DockerMachineTemplate

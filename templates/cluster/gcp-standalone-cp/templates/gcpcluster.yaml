@@ -5,14 +5,14 @@ metadata:
   finalizers:
     - k0rdent.mirantis.com/cleanup
 spec:
-  project: {{ .Values.project }}
-  region: {{ .Values.region }}
+  project: {{ .Values.project  | quote }}
+  region: {{ .Values.region  | quote }}
   network:
-    name: {{ .Values.network.name }}
+    name: {{ .Values.network.name  | quote }}
     mtu: {{ .Values.network.mtu }}
   {{- if .Values.additionalLabels }}
   additionalLabels: {{- toYaml .Values.additionalLabels | nindent 4 }}
   {{- end }}
   credentialsRef:
-    name: {{ .Values.clusterIdentity.name }}
+    name: {{ .Values.clusterIdentity.name  | quote }}
     namespace: {{ .Values.clusterIdentity.namespace }}

@@ -5,7 +5,7 @@ metadata:
   name: {{ include "k0scontrolplane.name" . }}
 spec:
   replicas: {{ .Values.controlPlaneNumber }}
-  version: {{ .Values.k0s.version }}
+  version: {{ .Values.k0s.version  | quote }}
   k0sConfigSpec:
     {{- if $global.k0sURL }}
     downloadURL: "{{ $global.k0sURL }}/k0s-{{ .Values.k0s.version }}-{{ .Values.k0s.arch }}"
@@ -26,8 +26,8 @@ spec:
       {{- if .Values.auth.configSecret.name }}
       - contentFrom:
           secretRef:
-            name: {{ .Values.auth.configSecret.name }}
-            key: {{ default "config" .Values.auth.configSecret.key }}
+            name: {{ .Values.auth.configSecret.name  | quote }}
+            key: {{ default "config" .Values.auth.configSecret.key  | quote }}
         permissions: "0644"
         path: {{ include "authentication-config.fullpath" . }}
       {{- end }}

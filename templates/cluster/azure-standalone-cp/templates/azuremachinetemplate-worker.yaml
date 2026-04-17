@@ -9,9 +9,9 @@ spec:
         diskSizeGB: {{ .Values.worker.rootVolumeSize }}
         osType: Linux
       {{- if not (quote .Values.worker.sshPublicKey | empty) }}
-      sshPublicKey: {{ .Values.worker.sshPublicKey }}
+      sshPublicKey: {{ .Values.worker.sshPublicKey  | quote }}
       {{- end }}
-      vmSize: {{ required ".Values.worker.vmSize is required" .Values.worker.vmSize }}
+      vmSize: {{ required ".Values.worker.vmSize is required" .Values.worker.vmSize  | quote }}
       {{- if not (quote .Values.worker.image | empty) }}
       {{- with .Values.worker.image }}
       image:

@@ -5,7 +5,7 @@ metadata:
 spec:
   template:
     spec:
-      version: {{ .Values.k0s.version }}
+      version: {{ .Values.k0s.version  | quote }}
       {{- with .Values.k0s.workerArgs }}
       args: {{ toYaml . | nindent 8 }}
       {{- end }}

@@ -13,21 +13,21 @@ spec:
   {{- end }}
   networkSpec:
     vnet:
-      resourceGroup: {{ .Values.resourceGroup }}
-      name: {{ .Values.network.vnetName }}
+      resourceGroup: {{ .Values.resourceGroup  | quote }}
+      name: {{ .Values.network.vnetName  | quote }}
     subnets:
-      - name: {{ .Values.network.nodeSubnetName }}
+      - name: {{ .Values.network.nodeSubnetName  | quote }}
         role: node
         routeTable:
-          name: {{ .Values.network.routeTableName }}
+          name: {{ .Values.network.routeTableName  | quote }}
         securityGroup:
-          name: {{ .Values.network.securityGroupName }}
-  location: {{ .Values.location }}
+          name: {{ .Values.network.securityGroupName  | quote }}
+  location: {{ .Values.location  | quote }}
   {{- if .Values.bastion.enabled }}
   {{- with .Values.bastion.bastionSpec }}
   bastionSpec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   {{- end }}
-  subscriptionID: {{ required ".Values.subscriptionID is required to create a cluster" .Values.subscriptionID }}
-  resourceGroup: {{ .Values.resourceGroup }}
+  subscriptionID: {{ required ".Values.subscriptionID is required to create a cluster" .Values.subscriptionID  | quote }}
+  resourceGroup: {{ .Values.resourceGroup  | quote }}

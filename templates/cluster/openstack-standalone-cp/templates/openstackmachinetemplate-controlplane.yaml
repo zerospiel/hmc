@@ -5,14 +5,14 @@ metadata:
 spec:
   template:
     spec:
-      flavor: {{ .Values.controlPlane.flavor }}
+      flavor: {{ .Values.controlPlane.flavor  | quote }}
       identityRef:
-        name: {{ .Values.clusterIdentity.name }}
-        region: {{ .Values.identityRef.region }}
-        cloudName: {{ .Values.identityRef.cloudName}}
+        name: {{ .Values.clusterIdentity.name  | quote }}
+        region: {{ .Values.identityRef.region  | quote }}
+        cloudName: {{ .Values.identityRef.cloudName | quote }}
       image:
         filter:
-          name: {{ .Values.controlPlane.image.filter.name }}
+          name: {{ .Values.controlPlane.image.filter.name  | quote }}
           {{- if .Values.controlPlane.image.filter.tags }}
           tags:
             {{- range $tag := .Values.controlPlane.image.filter.tags }}
