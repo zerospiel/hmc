@@ -227,8 +227,12 @@ package-chart-%: lint-chart-%
 	$(HELM) package --destination $(CHARTS_PACKAGE_DIR) $(TEMPLATES_SUBDIR)/$*
 
 .PHONY: lint-charts
-lint-charts: helm ## Run Helm dependency update and lint for charts.
+lint-charts: helm lint-quoted-values ## Run quote checks plus Helm dependency update and lint for charts.
 	@$(MAKE) $(patsubst %,lint-%-tmpl,$(TEMPLATE_FOLDERS))
+
+.PHONY: lint-quoted-values
+lint-quoted-values: yq ## Ensure string .Values YAML interpolations are quoted in template charts.
+	@YQ=$(YQ) $(SHELL) hack/lint-quoted-values.bash
 
 lint-%-tmpl:
 	@$(MAKE) TEMPLATES_SUBDIR=$(TEMPLATES_DIR)/$* $(patsubst %,lint-chart-%,$(shell ls $(TEMPLATES_DIR)/$*))
