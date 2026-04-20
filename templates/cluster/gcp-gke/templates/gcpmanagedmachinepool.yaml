@@ -4,8 +4,8 @@ kind: GCPManagedMachinePool
 metadata:
   name: {{ include "machinepool.name" . }}
 spec:
-  nodePoolName: {{ .Values.machines.nodePoolName }}
-  machineType: {{ .Values.machines.machineType }}
+  nodePoolName: {{ .Values.machines.nodePoolName  | quote }}
+  machineType: {{ .Values.machines.machineType  | quote }}
   diskSizeGB: {{ .Values.machines.diskSizeGB }}
   {{- with .Values.machines }}
   localSsdCount: {{ .localSsdCount }}

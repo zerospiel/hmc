@@ -3,7 +3,7 @@ kind: K0smotronControlPlane
 metadata:
   name: {{ include "k0smotroncontrolplane.name" . }}
 spec:
-  version: {{ .Values.k0s.version | replace "+" "-" }}
+  version: {{ .Values.k0s.version | replace "+" "-"  | quote }}
   persistence:
     type: emptyDir
   {{- with .Values.k0smotron.service }}

@@ -6,13 +6,13 @@ spec:
   template:
     spec:
       virtualMachineBootstrapCheck:
-        checkStrategy: {{ .Values.controlPlane.bootstrapCheckStrategy }}
+        checkStrategy: {{ .Values.controlPlane.bootstrapCheckStrategy  | quote }}
       virtualMachineTemplate:
         metadata:
           namespace: {{ .Release.Namespace | trunc 63 }}
           annotations: {{- toYaml .Values.controlPlane.annotations | nindent 12 }}
         spec:
-          runStrategy: {{ .Values.controlPlane.runStrategy }}
+          runStrategy: {{ .Values.controlPlane.runStrategy  | quote }}
           template:
             metadata:
               annotations: {{- toYaml .Values.controlPlane.annotations | nindent 16 }}
@@ -22,7 +22,7 @@ spec:
               domain:
                 cpu:
                   cores: {{ .Values.controlPlane.cpus }}
-                  model: {{ .Values.controlPlane.cpu.model }}
+                  model: {{ .Values.controlPlane.cpu.model  | quote }}
                   numa: {{- toYaml .Values.controlPlane.cpu.numa | nindent 20 }}
                 ioThreadsPolicy: {{ .Values.controlPlane.ioThreadsPolicy }}
                 devices:
@@ -30,7 +30,7 @@ spec:
                   disks: {{- include "devices.disks" .Values.controlPlane | nindent 20 }}
                   networkInterfaceMultiqueue: {{ .Values.controlPlane.networkInterfaceMultiqueue }}
                 memory:
-                  guest: {{ .Values.controlPlane.memory }}
+                  guest: {{ .Values.controlPlane.memory  | quote }}
               evictionStrategy: External
               networks: {{- toYaml .Values.controlPlane.networks | nindent 16 }}
               volumes:

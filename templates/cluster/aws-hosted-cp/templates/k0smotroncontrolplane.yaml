@@ -6,7 +6,7 @@ metadata:
 spec:
   replicas: 3
   # dirty hack
-  version: {{ .Values.k0s.version | replace "+" "-" }}
+  version: {{ .Values.k0s.version | replace "+" "-"  | quote }}
   {{- with .Values.k0smotron.service }}
   service:
     {{- toYaml . | nindent 4 }}
@@ -32,22 +32,22 @@ spec:
       secret:
         defaultMode: 420
         items:
-          - key: {{ .Values.auth.configSecret.key }}
+          - key: {{ .Values.auth.configSecret.key  | quote }}
             path: {{ include "authentication-config.file" . }}
-        secretName: {{ .Values.auth.configSecret.name }}
+        secretName: {{ .Values.auth.configSecret.name  | quote }}
     {{- end }}
     {{- if .Values.dataSource.caSecret.name }}
     - path: /var/lib/k0s/kine-ca
       secret:
         defaultMode: 420
         items:
-          - key: {{ .Values.dataSource.caSecret.key }}
+          - key: {{ .Values.dataSource.caSecret.key  | quote }}
             path: ca.crt
-        secretName: {{ .Values.dataSource.caSecret.name }}
+        secretName: {{ .Values.dataSource.caSecret.name  | quote }}
     {{- end }}
   {{- end }}
   {{- if .Values.dataSource.kineDataSourceSecretName }}
-  kineDataSourceSecretName: {{ .Values.dataSource.kineDataSourceSecretName }}
+  kineDataSourceSecretName: {{ .Values.dataSource.kineDataSourceSecretName  | quote }}
   {{- end }}
   manifests:
     - name: manifests
@@ -139,7 +139,7 @@ data:
         cloudConfig:
           enabled: true
           global:
-            KubernetesClusterID: {{ required ".Values.managementClusterName is required on AWS hosted deployment" .Values.managementClusterName }}
+            KubernetesClusterID: {{ required ".Values.managementClusterName is required on AWS hosted deployment" .Values.managementClusterName  | quote }}
         # Removing the default `node-role.kubernetes.io/control-plane` node selector
         # TODO: it does not work
         nodeSelector:

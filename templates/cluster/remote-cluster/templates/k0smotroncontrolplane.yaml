@@ -5,7 +5,7 @@ metadata:
   name: {{ include "k0smotroncontrolplane.name" . }}
 spec:
   replicas: {{ .Values.controlPlaneNumber }}
-  version: {{ .Values.k0s.version | replace "+" "-" }}
+  version: {{ .Values.k0s.version | replace "+" "-"  | quote }}
   {{- with .Values.k0smotron.controllerPlaneFlags }}
   controllerPlaneFlags:
     {{- toYaml . | nindent 4 }}
@@ -35,22 +35,22 @@ spec:
       secret:
         defaultMode: 420
         items:
-          - key: {{ .Values.auth.configSecret.key }}
+          - key: {{ .Values.auth.configSecret.key  | quote }}
             path: {{ include "authentication-config.file" . }}
-        secretName: {{ .Values.auth.configSecret.name }}
+        secretName: {{ .Values.auth.configSecret.name  | quote }}
     {{- end }}
     {{- if .Values.dataSource.caSecret.name }}
     - path: /var/lib/k0s/kine-ca
       secret:
         defaultMode: 420
         items:
-          - key: {{ .Values.dataSource.caSecret.key }}
+          - key: {{ .Values.dataSource.caSecret.key  | quote }}
             path: ca.crt
-        secretName: {{ .Values.dataSource.caSecret.name }}
+        secretName: {{ .Values.dataSource.caSecret.name  | quote }}
     {{- end }}
   {{- end }}
   {{- if .Values.dataSource.kineDataSourceSecretName }}
-  kineDataSourceSecretName: {{ .Values.dataSource.kineDataSourceSecretName }}
+  kineDataSourceSecretName: {{ .Values.dataSource.kineDataSourceSecretName  | quote }}
   {{- end }}
   k0sConfig:
     apiVersion: k0s.k0sproject.io/v1beta1

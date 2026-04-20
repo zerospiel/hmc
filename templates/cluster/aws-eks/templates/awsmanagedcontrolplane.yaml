@@ -3,12 +3,12 @@ kind: AWSManagedControlPlane
 metadata:
   name: {{ include "awsmanagedcontrolplane.name" . }}
 spec:
-  eksClusterName: {{ .Values.eksClusterName }}
-  region: {{ .Values.region }}
+  eksClusterName: {{ .Values.eksClusterName  | quote }}
+  region: {{ .Values.region  | quote }}
   {{- if not (quote .Values.sshKeyName | empty) }}
   sshKeyName: {{ .Values.sshKeyName | quote }}
   {{- end }}
-  version: {{ .Values.kubernetes.version }}
+  version: {{ .Values.kubernetes.version  | quote }}
   associateOIDCProvider: {{ .Values.associateOIDCProvider }}
   {{- with .Values.oidcIdentityProviderConfig }}
   oidcIdentityProviderConfig: {{- toYaml . | nindent 4 }}
@@ -21,8 +21,8 @@ spec:
   kubeProxy:
     disable: {{ .Values.kubeProxy.disable }}
   identityRef:
-    kind: {{ .Values.clusterIdentity.kind }}
-    name: {{ .Values.clusterIdentity.name }}
+    kind: {{ .Values.clusterIdentity.kind  | quote }}
+    name: {{ .Values.clusterIdentity.name  | quote }}
   {{- with .Values.addons }}
   addons: {{- toYaml . | nindent 4 }}
   {{- end }}

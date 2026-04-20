@@ -5,9 +5,9 @@ metadata:
 spec:
   identityRef:
     kind: VSphereClusterIdentity
-    name: {{ .Values.clusterIdentity.name }}
+    name: {{ .Values.clusterIdentity.name  | quote }}
   controlPlaneEndpoint:
-    host: {{ .Values.controlPlaneEndpointIP }}
+    host: {{ .Values.controlPlaneEndpointIP  | quote }}
     port: 6443
-  server: {{ .Values.vsphere.server }}
-  thumbprint: {{ .Values.vsphere.thumbprint }}
+  server: {{ .Values.vsphere.server  | quote }}
+  thumbprint: {{ .Values.vsphere.thumbprint  | quote }}

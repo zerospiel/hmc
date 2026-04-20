@@ -35,7 +35,7 @@ spec:
       preStartCommands:
       - "sudo update-ca-certificates"
       {{- end }}
-      version: {{ .Values.k0s.version }}
+      version: {{ .Values.k0s.version  | quote }}
       args:
       - --kubelet-extra-args="--fail-cgroupv1=false"
       {{- range $arg := .Values.k0s.workerArgs }}

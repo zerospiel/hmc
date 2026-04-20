@@ -6,20 +6,20 @@ spec:
   template:
     spec:
       cloneMode: linkedClone
-      datacenter: {{ .Values.vsphere.datacenter }}
-      datastore: {{ .Values.vsphere.datastore }}
+      datacenter: {{ .Values.vsphere.datacenter  | quote }}
+      datastore: {{ .Values.vsphere.datastore  | quote }}
       diskGiB: {{ .Values.rootVolumeSize }}
-      folder: {{ .Values.vsphere.folder }}
+      folder: {{ .Values.vsphere.folder  | quote }}
       memoryMiB: {{ .Values.memory }}
       network:
         devices:
         - dhcp4: true
-          networkName: {{ .Values.network }}
+          networkName: {{ .Values.network  | quote }}
       numCPUs: {{ .Values.cpus }}
       os: Linux
       powerOffMode: hard
-      resourcePool: {{ .Values.vsphere.resourcePool }}
-      server: {{ .Values.vsphere.server }}
+      resourcePool: {{ .Values.vsphere.resourcePool  | quote }}
+      server: {{ .Values.vsphere.server  | quote }}
       storagePolicyName: ""
-      template: {{ .Values.vmTemplate }}
-      thumbprint: {{ .Values.vsphere.thumbprint }}
+      template: {{ .Values.vmTemplate  | quote }}
+      thumbprint: {{ .Values.vsphere.thumbprint  | quote }}

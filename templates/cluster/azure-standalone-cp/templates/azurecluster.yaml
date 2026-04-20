@@ -9,11 +9,11 @@ spec:
   identityRef:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  location: {{ .Values.location }}
+  location: {{ .Values.location  | quote }}
   {{- if .Values.bastion.enabled }}
   {{- with .Values.bastion.bastionSpec }}
   bastionSpec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   {{- end }}
-  subscriptionID: {{ required ".Values.subscriptionID is required to create a cluster" .Values.subscriptionID }}
+  subscriptionID: {{ required ".Values.subscriptionID is required to create a cluster" .Values.subscriptionID  | quote }}

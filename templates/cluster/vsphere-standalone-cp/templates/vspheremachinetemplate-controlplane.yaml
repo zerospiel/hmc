@@ -6,15 +6,15 @@ spec:
   template:
     spec:
       cloneMode: linkedClone
-      datacenter: {{ .Values.vsphere.datacenter }}
-      datastore: {{ .Values.vsphere.datastore }}
+      datacenter: {{ .Values.vsphere.datacenter  | quote }}
+      datastore: {{ .Values.vsphere.datastore  | quote }}
       diskGiB: {{ .Values.controlPlane.rootVolumeSize }}
-      folder: {{ .Values.vsphere.folder }}
+      folder: {{ .Values.vsphere.folder  | quote }}
       memoryMiB: {{ .Values.controlPlane.memory }}
       network:
         devices:
         - dhcp4: {{ not .Values.ipamEnabled  }}
-          networkName: {{ .Values.controlPlane.network }}
+          networkName: {{ .Values.controlPlane.network  | quote }}
           {{- if .Values.ipamEnabled  }}
           addressesFromPools:
             - {{- toYaml .Values.ipPool.config | nindent 14 }}
@@ -25,8 +25,8 @@ spec:
       numCPUs: {{ .Values.controlPlane.cpus }}
       os: Linux
       powerOffMode: hard
-      resourcePool: {{ .Values.vsphere.resourcePool }}
-      server: {{ .Values.vsphere.server }}
+      resourcePool: {{ .Values.vsphere.resourcePool  | quote }}
+      server: {{ .Values.vsphere.server  | quote }}
       storagePolicyName: ""
-      template: {{ .Values.controlPlane.vmTemplate }}
-      thumbprint: {{ .Values.vsphere.thumbprint }}
+      template: {{ .Values.controlPlane.vmTemplate  | quote }}
+      thumbprint: {{ .Values.vsphere.thumbprint  | quote }}

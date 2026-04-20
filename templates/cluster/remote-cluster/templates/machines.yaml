@@ -28,7 +28,7 @@ metadata:
     # to prevent premature K0sWorkerConfig deletion
     helm.sh/resource-policy: keep
 spec:
-  version: {{ $.Values.k0s.version }}
+  version: {{ $.Values.k0s.version  | quote }}
   {{- if $global.k0sURL }}
   downloadURL: "{{ $global.k0sURL }}/k0s-{{ $.Values.k0s.version }}-{{ $.Values.k0s.arch }}"
   {{- end }}
@@ -84,6 +84,6 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   sshKeyRef:
-    name: {{ $.Values.clusterIdentity.name }}
+    name: {{ $.Values.clusterIdentity.name  | quote }}
 ---
 {{- end }}

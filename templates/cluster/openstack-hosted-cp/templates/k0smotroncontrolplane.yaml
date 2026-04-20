@@ -6,7 +6,7 @@ metadata:
   name: {{ include "k0smotroncontrolplane.name" . }}
 spec:
   replicas: {{ .Values.controlPlaneNumber }}
-  version: {{ .Values.k0s.version | replace "+" "-" }}
+  version: {{ .Values.k0s.version | replace "+" "-"  | quote }}
   {{- with .Values.k0smotron.service }}
   service:
     {{- toYaml . | nindent 4 }}
@@ -14,14 +14,14 @@ spec:
   {{- if $ingressEnabled }}
   ingress:
     deploy: true
-    className: {{ .Values.ingress.className }}
+    className: {{ .Values.ingress.className  | quote }}
     {{- with .Values.ingress.annotations }}
     annotations:
       {{- toYaml . | nindent 6 }}
     {{- end }}
     port: {{ .Values.ingress.port }}
-    apiHost: {{ .Values.ingress.apiHost }}
-    konnectivityHost: {{ .Values.ingress.konnectivityHost }}
+    apiHost: {{ .Values.ingress.apiHost  | quote }}
+    konnectivityHost: {{ .Values.ingress.konnectivityHost  | quote }}
   {{- end }}
   {{- if $global.registry }}
   image: {{ $global.registry }}/k0sproject/k0s
@@ -44,22 +44,22 @@ spec:
       secret:
         defaultMode: 420
         items:
-          - key: {{ .Values.auth.configSecret.key }}
+          - key: {{ .Values.auth.configSecret.key  | quote }}
             path: {{ include "authentication-config.file" . }}
-        secretName: {{ .Values.auth.configSecret.name }}
+        secretName: {{ .Values.auth.configSecret.name  | quote }}
     {{- end }}
     {{- if .Values.dataSource.caSecret.name }}
     - path: /var/lib/k0s/kine-ca
       secret:
         defaultMode: 420
         items:
-          - key: {{ .Values.dataSource.caSecret.key }}
+          - key: {{ .Values.dataSource.caSecret.key  | quote }}
             path: ca.crt
-        secretName: {{ .Values.dataSource.caSecret.name }}
+        secretName: {{ .Values.dataSource.caSecret.name  | quote }}
     {{- end }}
   {{- end }}
   {{- if .Values.dataSource.kineDataSourceSecretName }}
-  kineDataSourceSecretName: {{ .Values.dataSource.kineDataSourceSecretName }}
+  kineDataSourceSecretName: {{ .Values.dataSource.kineDataSourceSecretName  | quote }}
   {{- end }}
   manifests:
     - name: manifests
@@ -162,7 +162,7 @@ data:
             value: {{ .Values.ccmRegional | quote }}
           {{- if $ingressEnabled }}
           - name: KUBERNETES_SERVICE_HOST
-            value: {{ .Values.ingress.apiHost }}
+            value: {{ .Values.ingress.apiHost  | quote }}
           - name: KUBERNETES_SERVICE_PORT
             value: {{ .Values.ingress.port | quote }}
           {{- end }}
@@ -176,7 +176,7 @@ data:
           {{- if and .Values.identityRef.caCert .Values.identityRef.caCert.secretName }}
           - name: cloud-ca-cert
             secret:
-              secretName: {{ .Values.identityRef.caCert.secretName }}
+              secretName: {{ .Values.identityRef.caCert.secretName  | quote }}
           {{- end }}
         extraVolumeMounts:
           - name: flexvolume-dir
@@ -187,7 +187,7 @@ data:
             readOnly: true
           {{- if and .Values.identityRef.caCert .Values.identityRef.caCert.secretName }}
           - name: cloud-ca-cert
-            mountPath: {{ .Values.identityRef.caCert.path }}
+            mountPath: {{ .Values.identityRef.caCert.path  | quote }}
           {{- end }}
   2-chart-openstack-cinder-csi.yaml: |
     apiVersion: helm.k0sproject.io/v1beta1
@@ -265,11 +265,11 @@ data:
             volumes:
             - name: cloud-ca-cert
               secret:
-                secretName: {{ .Values.identityRef.caCert.secretName }}
+                secretName: {{ .Values.identityRef.caCert.secretName  | quote }}
             volumeMounts:
             - name: cloud-config
               mountPath: /etc/kubernetes
               readOnly: true
             - name: cloud-ca-cert
-              mountPath: {{ .Values.identityRef.caCert.path }}
+              mountPath: {{ .Values.identityRef.caCert.path  | quote }}
            {{- end }}

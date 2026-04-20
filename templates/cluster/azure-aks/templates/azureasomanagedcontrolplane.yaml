@@ -8,7 +8,7 @@ spec:
       kind: ManagedCluster
       metadata:
         annotations:
-          serviceoperator.azure.com/credential-from: {{ .Values.clusterIdentity.name }}
+          serviceoperator.azure.com/credential-from: {{ .Values.clusterIdentity.name  | quote }}
           meta.helm.sh/release-name: {{ .Release.Name }}
           meta.helm.sh/release-namespace: {{ .Release.Namespace }}
         labels:
@@ -22,7 +22,7 @@ spec:
           {{- if .Values.apiServerAccessProfile.enablePrivateCluster }}
           enablePrivateCluster: {{ .Values.apiServerAccessProfile.enablePrivateCluster }}
           enablePrivateClusterPublicFQDN: {{ .Values.apiServerAccessProfile.enablePrivateClusterPublicFQDN }}
-          privateDNSZone: {{ .Values.apiServerAccessProfile.privateDNSZone }}
+          privateDNSZone: {{ .Values.apiServerAccessProfile.privateDNSZone  | quote }}
           {{- end }}
         {{- with .Values.autoUpgradeProfile }}
         autoUpgradeProfile:
@@ -35,11 +35,11 @@ spec:
         dnsPrefix: {{ include "cluster.name" . }}
         identity:
           type: SystemAssigned
-        location: {{ .Values.location }}
+        location: {{ .Values.location  | quote }}
         networkProfile:
-          dnsServiceIP: {{ .Values.dnsServiceIP }}
-          networkPlugin: {{ .Values.kubernetes.networkPlugin }}
-          networkPolicy: {{ .Values.kubernetes.networkPolicy }}
+          dnsServiceIP: {{ .Values.dnsServiceIP  | quote }}
+          networkPlugin: {{ .Values.kubernetes.networkPlugin  | quote }}
+          networkPolicy: {{ .Values.kubernetes.networkPolicy  | quote }}
         oidcIssuerProfile:
           enabled: {{ .Values.oidcIssuerProfile.enabled }}
         owner:
@@ -48,8 +48,8 @@ spec:
           {{- if .Values.securityProfile.azureKeyVaultKms.enabled }}
           azureKeyVaultKms:
             enabled: {{ .Values.securityProfile.azureKeyVaultKms.enabled }}
-            keyId: {{ .Values.securityProfile.azureKeyVaultKms.keyId }}
-            keyVaultNetworkAccess: {{ .Values.securityProfile.azureKeyVaultKms.keyVaultNetworkAccess }}
+            keyId: {{ .Values.securityProfile.azureKeyVaultKms.keyId  | quote }}
+            keyVaultNetworkAccess: {{ .Values.securityProfile.azureKeyVaultKms.keyVaultNetworkAccess  | quote }}
             {{- with .Values.securityProfile.azureKeyVaultKms.keyVaultResourceReference }}
             keyVaultResourceReference:
               {{- toYaml . | nindent 14 }}
@@ -68,18 +68,18 @@ spec:
           workloadIdentity:
             enabled: {{ .Values.securityProfile.workloadIdentity.enabled }}
         serviceMeshProfile:
-          mode: {{ .Values.serviceMeshProfile.mode }}
+          mode: {{ .Values.serviceMeshProfile.mode  | quote }}
           {{- if eq .Values.serviceMeshProfile.mode "Istio" }}
           istio:
             certificateAuthority:
-              certChainObjectName: {{ .Values.serviceMeshProfile.istio.certificateAuthority.certChainObjectName }}
-              certObjectName: {{ .Values.serviceMeshProfile.istio.certificateAuthority.certObjectName }}
-              keyObjectName: {{ .Values.serviceMeshProfile.istio.certificateAuthority.keyObjectName }}
+              certChainObjectName: {{ .Values.serviceMeshProfile.istio.certificateAuthority.certChainObjectName  | quote }}
+              certObjectName: {{ .Values.serviceMeshProfile.istio.certificateAuthority.certObjectName  | quote }}
+              keyObjectName: {{ .Values.serviceMeshProfile.istio.certificateAuthority.keyObjectName  | quote }}
               {{- with .Values.serviceMeshProfile.istio.certificateAuthority.keyVaultReference }}
               keyVaultReference:
                 {{- toYaml . | nindent 16 }}
               {{- end }}
-              rootCertObjectName: {{ .Values.serviceMeshProfile.istio.certificateAuthority.rootCertObjectName }}
+              rootCertObjectName: {{ .Values.serviceMeshProfile.istio.certificateAuthority.rootCertObjectName  | quote }}
             {{- with .Values.serviceMeshProfile.istio.components }}
             components:
               {{- toYaml . | nindent 14 }}
@@ -95,4 +95,4 @@ spec:
         sku:
           {{- toYaml . | nindent 10 }}
         {{- end }}
-  version: {{ .Values.kubernetes.version }}
+  version: {{ .Values.kubernetes.version  | quote }}

@@ -8,8 +8,8 @@ spec:
   version: {{ $version }}
   {{- if .Values.configSecret.name }}
   configSecret:
-    name: {{ .Values.configSecret.name }}
-    namespace: {{ .Values.configSecret.namespace | default .Release.Namespace | trunc 63 }}
+    name: {{ .Values.configSecret.name  | quote }}
+    namespace: {{ .Values.configSecret.namespace | default .Release.Namespace | trunc 63  | quote }}
   {{- end }}
   manager: {{- toYaml .Values.infrastructure.manager | nindent 4 }}
   {{- if $global.registry }}
@@ -31,8 +31,8 @@ spec:
   version: {{ $version }}
   {{- if .Values.configSecret.name }}
   configSecret:
-    name: {{ .Values.configSecret.name }}
-    namespace: {{ .Values.configSecret.namespace | default .Release.Namespace | trunc 63 }}
+    name: {{ .Values.configSecret.name  | quote }}
+    namespace: {{ .Values.configSecret.namespace | default .Release.Namespace | trunc 63  | quote }}
   {{- end }}
   manager: {{- toYaml .Values.bootstrap.manager | nindent 4 }}
   {{- if $global.registry }}
@@ -54,8 +54,8 @@ spec:
   version: {{ $version }}
   {{- if .Values.configSecret.name }}
   configSecret:
-    name: {{ .Values.configSecret.name }}
-    namespace: {{ .Values.configSecret.namespace | default .Release.Namespace | trunc 63 }}
+    name: {{ .Values.configSecret.name  | quote }}
+    namespace: {{ .Values.configSecret.namespace | default .Release.Namespace | trunc 63  | quote }}
   {{- end }}
   manager: {{- toYaml .Values.controlPlane.manager | nindent 4 }}
   {{- if $global.registry }}

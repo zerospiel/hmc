@@ -9,7 +9,7 @@ spec:
       kind: ManagedClustersAgentPool
       metadata:
         annotations:
-          serviceoperator.azure.com/credential-from: {{ .Values.clusterIdentity.name }}
+          serviceoperator.azure.com/credential-from: {{ .Values.clusterIdentity.name  | quote }}
           meta.helm.sh/release-name: {{ .Release.Name }}
           meta.helm.sh/release-namespace: {{ .Release.Namespace }}
         labels:
@@ -37,5 +37,5 @@ spec:
         osDiskSizeGB: {{ .Values.machinePools.user.osDiskSizeGB }}
         owner:
           name: {{ include "cluster.name" . }}
-        type: {{ .Values.machinePools.user.type }}
-        vmSize: {{ .Values.machinePools.user.vmSize }}
+        type: {{ .Values.machinePools.user.type  | quote }}
+        vmSize: {{ .Values.machinePools.user.vmSize  | quote }}

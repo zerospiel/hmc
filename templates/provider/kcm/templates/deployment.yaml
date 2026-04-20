@@ -86,7 +86,7 @@ spec:
         {{- else }}
         {{- .Values.image.repository }}
         {{- end }}:{{ .Values.image.tag | default .Chart.AppVersion }}
-        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        imagePullPolicy: {{ .Values.image.pullPolicy  | quote }}
         {{- if .Values.admissionWebhook.enabled }}
         ports:
         - containerPort: {{ .Values.admissionWebhook.port }}
@@ -110,7 +110,7 @@ spec:
         securityContext: {{ toYaml .Values.containerSecurityContext | nindent 10 }}
         {{- if .Values.admissionWebhook.enabled }}
         volumeMounts:
-          - mountPath: {{ .Values.admissionWebhook.certDir }}
+          - mountPath: {{ .Values.admissionWebhook.certDir  | quote }}
             name: cert
             readOnly: true
         {{- end }}
@@ -129,7 +129,7 @@ spec:
       terminationGracePeriodSeconds: 10
       {{- if .Values.controller.imagePullSecret }}
       imagePullSecrets:
-        - name: {{ .Values.controller.imagePullSecret }}
+        - name: {{ .Values.controller.imagePullSecret  | quote }}
       {{- else if .Values.imagePullSecrets }}
       imagePullSecrets: {{ toYaml .Values.imagePullSecrets | nindent 8 }}
       {{- end }}

@@ -7,13 +7,13 @@ spec:
     spec:
       {{- if not (quote .Values.worker.amiID | empty) }}
       ami:
-        id: {{ .Values.worker.amiID }}
+        id: {{ .Values.worker.amiID  | quote }}
       {{- end }}
-      imageLookupFormat: {{ .Values.worker.imageLookup.format }}
-      imageLookupOrg: {{ .Values.worker.imageLookup.org }}
-      imageLookupBaseOS: {{ .Values.worker.imageLookup.baseOS }}
-      instanceType: {{ .Values.worker.instanceType }}
-      iamInstanceProfile: {{ .Values.worker.iamInstanceProfile }}
+      imageLookupFormat: {{ .Values.worker.imageLookup.format  | quote }}
+      imageLookupOrg: {{ .Values.worker.imageLookup.org  | quote }}
+      imageLookupBaseOS: {{ .Values.worker.imageLookup.baseOS  | quote }}
+      instanceType: {{ .Values.worker.instanceType  | quote }}
+      iamInstanceProfile: {{ .Values.worker.iamInstanceProfile  | quote }}
       publicIP: {{ .Values.publicIP }}
       rootVolume:
         size: {{ .Values.worker.rootVolumeSize }}
