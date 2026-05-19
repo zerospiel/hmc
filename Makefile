@@ -415,7 +415,6 @@ kcm-deploy: helm ## Deploy/upgrade KCM Helm chart into namespace.
 	$(HELM) upgrade --values $(KCM_VALUES) --reuse-values --install --create-namespace $(KCM_HELM_RELEASE_NAME) $(PROVIDER_TEMPLATES_DIR)/kcm -n $(NAMESPACE)
 
 .PHONY: dev-deploy
-dev-deploy: DEPLOYMENT_NAME := $(if $(findstring kcm,$(KCM_HELM_RELEASE_NAME)),$(KCM_HELM_RELEASE_NAME)-controller-manager,$(KCM_HELM_RELEASE_NAME)-kcm-controller-manager)
 dev-deploy: yq ## Configure and deploy KCM chart for development.
 	@$(YQ) eval -i '.image.repository = "$(IMG_REPO)"' config/dev/kcm_values.yaml
 	@$(YQ) eval -i '.regional.telemetry.controller.image.repository = "$(IMG_TELEMETRY_REPO)"' config/dev/kcm_values.yaml
@@ -433,7 +432,7 @@ dev-deploy: yq ## Configure and deploy KCM chart for development.
 		$(YQ) eval -i '.regional.telemetry.interval = "10m"' config/dev/kcm_values.yaml; \
 	fi;
 	$(MAKE) kcm-deploy KCM_VALUES=config/dev/kcm_values.yaml
-	$(KUBECTL) rollout restart -n $(NAMESPACE) deployment/$(DEPLOYMENT_NAME)
+	$(KUBECTL) rollout restart deployment -n $(NAMESPACE) -l k0rdent.mirantis.com/component=kcm
 
 .PHONY: dev-undeploy
 dev-undeploy: ## Remove KCM release from namespace.
@@ -476,8 +475,9 @@ dev-apply: kind-deploy registry-deploy dev-push dev-deploy dev-templates dev-rel
 .PHONY: dev-upgrade
 dev-upgrade: VALUES_FILE ?= config/dev/kcm_values.yaml
 dev-upgrade: READINESS_TIMEOUT ?= 30m
-dev-upgrade: yq generate-all dev-push dev-templates ## Upgrade dev environment and wait until Management is ready.
-	@YQ=$(YQ) KUBECTL=$(KUBECTL) VERSION=$(VERSION) FQDN_VERSION=$(FQDN_VERSION) PROVIDER_TEMPLATES_DIR=$(PROVIDER_TEMPLATES_DIR) VALUES_FILE=$(VALUES_FILE) NAMESPACE=$(NAMESPACE) READINESS_TIMEOUT=$(READINESS_TIMEOUT) $(SHELL) hack/dev-upgrade.bash
+dev-upgrade: KCM_DEPLOYMENT_NAME := $(if $(findstring kcm,$(KCM_HELM_RELEASE_NAME)),$(KCM_HELM_RELEASE_NAME)-controller-manager,$(KCM_HELM_RELEASE_NAME)-kcm-controller-manager)
+dev-upgrade: yq set-kcm-version generate-all dev-push dev-templates ## Upgrade dev environment and wait until Management is ready.
+	@YQ=$(YQ) KUBECTL=$(KUBECTL) VERSION=$(VERSION) FQDN_VERSION=$(FQDN_VERSION) PROVIDER_TEMPLATES_DIR=$(PROVIDER_TEMPLATES_DIR) VALUES_FILE=$(VALUES_FILE) NAMESPACE=$(NAMESPACE) READINESS_TIMEOUT=$(READINESS_TIMEOUT) KCM_DEPLOYMENT_NAME=$(KCM_DEPLOYMENT_NAME) $(SHELL) hack/dev-upgrade.bash
 
 PUBLIC_REPO ?= false
 

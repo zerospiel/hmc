@@ -40,7 +40,7 @@ trap 'rm -f "${tmp}"' EXIT
 echo "Patching Management object to use Release: kcm-${FQDN_VERSION}"
 "${KUBECTL}" patch management kcm --type=merge -p '{"spec":{"release":"kcm-'"${FQDN_VERSION}"'"}}'
 
-"${KUBECTL}" rollout restart -n "${NAMESPACE}" deployment/kcm-controller-manager
+"${KUBECTL}" rollout restart deployment -n "${NAMESPACE}" -l k0rdent.mirantis.com/component=kcm
 
 echo "Waiting for Management object status.release to match kcm-${FQDN_VERSION}..."
 "${KUBECTL}" wait management kcm --for="jsonpath={.status.release}=kcm-${FQDN_VERSION}" --timeout="${READINESS_TIMEOUT}"
