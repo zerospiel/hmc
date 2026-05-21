@@ -428,7 +428,7 @@ spec:
                   x-kubernetes-list-type: map
                 deployed:
                   default: false
-                  description: Deployed is true if the ServiceSet has been deployed
+                  description: Deployed indicates whether all services were successfully deployed
                   type: boolean
                 provider:
                   description: Provider is the state of the provider

@@ -208,7 +208,7 @@ type ServiceSetStatus struct {
 
 	// +kubebuilder:default=false
 
-	// Deployed is true if the ServiceSet has been deployed
+	// Deployed indicates whether all services were successfully deployed
 	Deployed bool `json:"deployed"`
 
 	// Provider is the state of the provider
