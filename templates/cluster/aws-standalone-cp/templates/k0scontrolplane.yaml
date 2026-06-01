@@ -23,7 +23,7 @@ spec:
     # DEPRECATED: The `k0s.auth` field is deprecated.
     # Use the `ClusterAuthentication` resource to configure authentication instead.
     {{- $auth := .Values.k0s.auth }}
-    {{- if or (and $auth $auth.enabled) $files $global.registryCertSecret $global.k0sURLCertSecret .Values.auth.configSecret.name .Values.encryption.configSecret.name }}
+    {{- if or (and $auth $auth.enabled) $files $global.registryCertSecret $global.k0sURLCertSecret .Values.auth.configSecret.name .Values.encryption.configSecret.name .Values.audit.policyRef.name }}
     {{- if and $auth $auth.enabled }}
     - content: | {{ toYaml $auth.config | nindent 8 }}
       permissions: "0644"
@@ -43,6 +43,14 @@ spec:
           key: {{ default "config" .Values.encryption.configSecret.key  | quote }}
       permissions: "0644"
       path: {{ include "encryption-config.fullpath" . }}
+    {{- end }}
+    {{- if .Values.audit.policyRef.name }}
+    - contentFrom:
+        configMapRef:
+          name: {{ .Values.audit.policyRef.name  | quote }}
+          key: {{ default "policy" .Values.audit.policyRef.key  | quote }}
+      permissions: "0644"
+      path: {{ include "audit-policy.fullpath" . }}
     {{- end }}
     {{- range $file := $files }}
     - {{ toYaml $file | trim | nindent 6 }}
@@ -176,6 +184,13 @@ spec:
     preStartCommands:
     - "sudo update-ca-certificates"
     {{- end }}
+    {{- if and .Values.audit.policyRef.name .Values.audit.logPath (ne .Values.audit.logPath "-") }}
+    {{- $logPath := .Values.audit.logPath }}
+    {{- $logDir := dir $logPath }}
+    postStartCommands:
+    - 'sudo mkdir -p {{ $logDir }}'
+    - 'sudo chown kube-apiserver:kube-apiserver {{ $logDir }}'
+    {{- end }}
     k0s:
       apiVersion: k0s.k0sproject.io/v1beta1
       kind: ClusterConfig
@@ -198,6 +213,23 @@ spec:
             encryption-provider-config: {{ include "encryption-config.fullpath" . }}
             {{- if .Values.encryption.automaticReload }}
             encryption-provider-config-automatic-reload: "true"
+            {{- end }}
+            {{- end }}
+            {{- if .Values.audit.policyRef.name }}
+            audit-policy-file: {{ include "audit-policy.fullpath" . }}
+            {{- with .Values.audit.logPath }}
+            audit-log-path: {{ . | quote }}
+            {{- end }}
+            {{- if and .Values.audit.logPath (ne .Values.audit.logPath "-") }}
+            {{- with .Values.audit.logMaxAge }}
+            audit-log-maxage: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.audit.logMaxBackup }}
+            audit-log-maxbackup: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.audit.logMaxSize }}
+            audit-log-maxsize: {{ . | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
           {{- with .Values.k0s.api.extraArgs }}

@@ -55,6 +55,9 @@ const (
 	// ClusterAuthenticationReadyCondition indicates whether the referenced [ClusterAuthentication] object exists
 	// and ready.
 	ClusterAuthenticationReadyCondition = "ClusterAuthenticationReady"
+	// ClusterAuditPolicyReadyCondition indicates whether the referenced [ClusterAuditPolicy] object exists
+	// and ready.
+	ClusterAuditPolicyReadyCondition = "ClusterAuditPolicyReady"
 	// DataSourceReadyCondition indicates whether the referenced [DataSource] object exists and ready.
 	DataSourceReadyCondition = "DataSourceReady"
 	// ClusterDataSourceReadyCondition indicates whether the dedicated [ClusterDataSource] object exists and its data is ready to be used.
@@ -113,6 +116,9 @@ type ClusterDeploymentSpec struct {
 	ClusterAuth string `json:"clusterAuth,omitempty"`
 	// DataSource is the name reference to the related [DataSource] object located in the same namespace.
 	DataSource string `json:"dataSource,omitempty"`
+	// AuditPolicy is the name reference to the related [ClusterAuditPolicy] object located in the same namespace
+	// containing audit policy configuration.
+	AuditPolicy string `json:"auditPolicy,omitempty"`
 	// IPAMClaim defines IP Address Management (IPAM) requirements for the cluster.
 	// It can either reference an existing IPAM claim or specify an inline claim.
 	IPAMClaim ClusterIPAMClaimType `json:"ipamClaim,omitempty"`

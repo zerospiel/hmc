@@ -69,6 +69,11 @@ spec:
             spec:
               description: ClusterDeploymentSpec defines the desired state of ClusterDeployment
               properties:
+                auditPolicy:
+                  description: |-
+                    AuditPolicy is the name reference to the related [ClusterAuditPolicy] object located in the same namespace
+                    containing audit policy configuration.
+                  type: string
                 cleanupOnDeletion:
                   description: |-
                     CleanupOnDeletion specifies whether potentially orphaned Services and PVCs

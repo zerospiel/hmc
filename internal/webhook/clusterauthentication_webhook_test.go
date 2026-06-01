@@ -61,10 +61,6 @@ OybpVQ==
 -----END CERTIFICATE-----
 `
 	validAuthConfig = &kcmv1.AuthenticationConfiguration{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "apiserver.config.k8s.io/v1beta1",
-			Kind:       "AuthenticationConfiguration",
-		},
 		JWT: []apiserverv1.JWTAuthenticator{
 			{
 				Issuer: apiserverv1.Issuer{
@@ -92,10 +88,6 @@ OybpVQ==
 	}
 
 	invalidAuthConfig = &kcmv1.AuthenticationConfiguration{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "apiserver.config.k8s.io/v1beta1",
-			Kind:       "AuthenticationConfiguration",
-		},
 		JWT: []apiserverv1.JWTAuthenticator{
 			{
 				Issuer: apiserverv1.Issuer{
@@ -312,6 +304,7 @@ func TestClusterAuthenticationValidateUpdate(t *testing.T) {
 	}
 }
 
+//nolint:dupl
 func TestClusterAuthenticationDelete(t *testing.T) {
 	g := NewWithT(t)
 

@@ -100,6 +100,12 @@ func WithClusterAuthentication(clAuthName string) Opt {
 	}
 }
 
+func WithClusterAuditPolicy(auditPolicy string) Opt {
+	return func(p *kcmv1.ClusterDeployment) {
+		p.Spec.AuditPolicy = auditPolicy
+	}
+}
+
 func WithAvailableUpgrades(availableUpgrades []string) Opt {
 	return func(p *kcmv1.ClusterDeployment) {
 		p.Status.AvailableUpgrades = availableUpgrades

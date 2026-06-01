@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/json"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
+	auditv1 "k8s.io/apiserver/pkg/apis/audit/v1"
 	clusterapiv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -76,6 +77,8 @@ var (
 	errClusterDeploymentSpecUpdated = errors.New("cluster deployment spec updated")
 	errIPAMNotReady                 = errors.New("IPAM not ready")
 	errInvalidIPAMClaimRef          = errors.New("invalid IPAM claim ref")
+
+	errNoRetrigger = errors.New("validation failed with webhooks disabled, will not retrigger")
 )
 
 type helmActor interface {
@@ -116,6 +119,7 @@ type (
 		region        *kcmv1.Region
 		kine          *kineConfig
 		auth          *authConfig
+		audit         *auditConfig
 		rgnClient     client.Client
 		deletionState *clusterDeletionState
 	}
@@ -123,6 +127,11 @@ type (
 	authConfig struct {
 		clAuth         *kcmv1.ClusterAuthentication
 		authConfigHash string
+	}
+
+	auditConfig struct {
+		policy *auditv1.Policy
+		hash   string
 	}
 
 	kineConfig struct {
@@ -153,9 +162,15 @@ func (r *ClusterDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, fmt.Errorf("failed to get Management: %w", err)
 	}
 
+	oldCD := clusterDeployment.DeepCopy()
 	scope, err := r.getClusterScope(ctx, clusterDeployment)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to get cluster scope: %w", err)
+		statusErr := r.updateStatus(ctx, oldCD, clusterDeployment, nil)
+		if errors.Is(err, errNoRetrigger) {
+			l.Error(err, "Failed to get cluster scope, will not retrigger")
+			return ctrl.Result{}, statusErr
+		}
+		return ctrl.Result{}, errors.Join(fmt.Errorf("failed to get cluster scope: %w", err), statusErr)
 	}
 
 	if !clusterDeployment.DeletionTimestamp.IsZero() {
@@ -181,7 +196,7 @@ func (r *ClusterDeploymentReconciler) getClusterScope(ctx context.Context, cd *k
 		if r.setCondition(cd, kcmv1.CredentialReadyCondition, kcmv1.FailedReason, metav1.ConditionFalse, err) {
 			r.warnf(cd, "CredentialError", err.Error())
 		}
-		return nil, fmt.Errorf("failed to get Credential %s: %w", credKey, err)
+		return nil, err
 	}
 
 	scope := &clusterScope{
@@ -224,8 +239,8 @@ func (r *ClusterDeploymentReconciler) getClusterScope(ctx context.Context, cd *k
 				if r.setCondition(cd, kcmv1.ClusterAuthenticationReadyCondition, kcmv1.FailedReason, metav1.ConditionFalse, err) {
 					r.warnf(cd, "ClusterAuthenticationError", err.Error())
 				}
-				l.Error(err, "ClusterAuthentication is invalid, will not retrigger this error", "ClusterAuthentication", clAuthKey)
-				return &clusterScope{}, nil
+				l.Error(err, "ClusterAuthentication is invalid", "ClusterAuthentication", clAuthKey)
+				return nil, errNoRetrigger
 			}
 		}
 
@@ -233,6 +248,39 @@ func (r *ClusterDeploymentReconciler) getClusterScope(ctx context.Context, cd *k
 		scope.auth = &authConfig{
 			clAuth: clAuth,
 		}
+	} else {
+		apimeta.RemoveStatusCondition(&cd.Status.Conditions, kcmv1.ClusterAuthenticationReadyCondition)
+	}
+
+	if cd.Spec.AuditPolicy != "" {
+		clAuditPolicy := &kcmv1.ClusterAuditPolicy{}
+
+		clAuditPolicyKey := client.ObjectKey{Namespace: cd.Namespace, Name: cd.Spec.AuditPolicy}
+		if err := r.MgmtClient.Get(ctx, clAuditPolicyKey, clAuditPolicy); err != nil {
+			err = fmt.Errorf("failed to get ClusterAuditPolicy %s: %w", clAuditPolicyKey, err)
+			if r.setCondition(cd, kcmv1.ClusterAuditPolicyReadyCondition, kcmv1.FailedReason, metav1.ConditionFalse, err) {
+				r.warnf(cd, "ClusterAuditPolicyError", err.Error())
+			}
+			return nil, err
+		}
+
+		if r.IsDisabledValidationWH {
+			if err := validationutil.ValidateClusterAuditPolicy(clAuditPolicy); err != nil {
+				if r.setCondition(cd, kcmv1.ClusterAuditPolicyReadyCondition, kcmv1.FailedReason, metav1.ConditionFalse, err) {
+					r.warnf(cd, "ClusterAuditPolicyError", err.Error())
+				}
+				l.Error(err, "ClusterAuditPolicy is invalid", "ClusterAuditPolicy", clAuditPolicyKey)
+				return nil, errNoRetrigger
+			}
+		}
+
+		r.setCondition(cd, kcmv1.ClusterAuditPolicyReadyCondition, kcmv1.SucceededReason, metav1.ConditionTrue, nil)
+
+		scope.audit = &auditConfig{
+			policy: clAuditPolicy.Spec.GetPolicy(),
+		}
+	} else {
+		apimeta.RemoveStatusCondition(&cd.Status.Conditions, kcmv1.ClusterAuditPolicyReadyCondition)
 	}
 
 	if cred.Spec.Region != "" {
@@ -371,8 +419,6 @@ func (r *ClusterDeploymentReconciler) updateCluster(
 		return ctrl.Result{}, errors.New("cluster template cannot be nil")
 	}
 
-	l := ctrl.LoggerFrom(ctx)
-
 	cd := scope.cd
 	r.initClusterConditions(cd)
 
@@ -385,15 +431,44 @@ func (r *ClusterDeploymentReconciler) updateCluster(
 
 	r.setStatusRegion(scope)
 
+	if err := r.validateAndPrepareCluster(ctx, clusterTpl, scope); err != nil {
+		if errors.Is(err, errNoRetrigger) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
+	if cd.Spec.DryRun {
+		return r.handleDryRun(ctx, cd, clusterTpl)
+	}
+
+	requeue, err := r.ensureClusterResources(ctx, scope)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if requeue {
+		return ctrl.Result{RequeueAfter: r.defaultRequeueTime}, nil
+	}
+
+	return r.reconcileHelmRelease(ctx, clusterTpl, scope)
+}
+
+func (r *ClusterDeploymentReconciler) validateAndPrepareCluster(
+	ctx context.Context,
+	clusterTpl *kcmv1.ClusterTemplate,
+	scope *clusterScope,
+) error {
+	cd := scope.cd
+
 	if r.IsDisabledValidationWH {
 		if err := r.validateDeployOnce(ctx, clusterTpl, cd); err != nil {
-			l.Error(err, "failed to validate ClusterDeployment, will not retrigger this error")
-			return ctrl.Result{}, err
+			ctrl.LoggerFrom(ctx).Error(err, "failed to validate ClusterDeployment")
+			return errNoRetrigger
 		}
 	}
 
 	if err := r.validateConfig(ctx, cd, clusterTpl); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to validate ClusterDeployment configuration: %w", err)
+		return fmt.Errorf("failed to validate ClusterDeployment configuration: %w", err)
 	}
 
 	if !r.IsDisabledValidationWH {
@@ -406,22 +481,36 @@ func (r *ClusterDeploymentReconciler) updateCluster(
 		}
 	}
 
-	if cd.Spec.DryRun {
-		if err := r.detectHelmChartNameChange(ctx, cd, clusterTpl); err != nil {
-			l.Error(err, "Detecting Helm chart name change")
-			return ctrl.Result{}, fmt.Errorf("detecting Helm chart name change: %w", err)
-		}
+	return nil
+}
 
-		r.eventf(cd, "DryRunEnabled", "DryRun mode is enabled. Remove spec.dryRun to proceed with the deployment")
-		return ctrl.Result{}, nil
+func (r *ClusterDeploymentReconciler) handleDryRun(ctx context.Context, cd *kcmv1.ClusterDeployment, clusterTpl *kcmv1.ClusterTemplate) (ctrl.Result, error) {
+	if err := r.detectHelmChartNameChange(ctx, cd, clusterTpl); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "Detecting Helm chart name change")
+		return ctrl.Result{}, fmt.Errorf("detecting Helm chart name change: %w", err)
 	}
+
+	r.eventf(cd, "DryRunEnabled", "DryRun mode is enabled. Remove spec.dryRun to proceed with the deployment")
+	return ctrl.Result{}, nil
+}
+
+func (r *ClusterDeploymentReconciler) ensureClusterResources(ctx context.Context, scope *clusterScope) (requeue bool, err error) {
+	cd := scope.cd
 
 	if err := r.ensureAuthConfigSecret(ctx, scope); err != nil {
 		err = fmt.Errorf("failed to create or update AuthenticationConfiguration secret: %w", err)
 		if r.setCondition(cd, kcmv1.ClusterAuthenticationReadyCondition, kcmv1.FailedReason, metav1.ConditionFalse, err) {
 			r.warnf(cd, "AuthConfigSecretError", err.Error())
 		}
-		return ctrl.Result{}, err
+		return false, err
+	}
+
+	if err := r.ensureAuditPolicyConfigMap(ctx, scope); err != nil {
+		err = fmt.Errorf("failed to create Audit Policy configmap: %w", err)
+		if r.setCondition(cd, kcmv1.ClusterAuditPolicyReadyCondition, kcmv1.FailedReason, metav1.ConditionFalse, err) {
+			r.warnf(cd, "AuditPolicyConfigMapError", err.Error())
+		}
+		return false, err
 	}
 
 	requeueDataSource, err := r.ensureDataSourceReferences(ctx, scope)
@@ -430,24 +519,34 @@ func (r *ClusterDeploymentReconciler) updateCluster(
 		if r.setCondition(cd, kcmv1.ClusterDataSourceReadyCondition, kcmv1.FailedReason, metav1.ConditionFalse, err) {
 			r.warnf(cd, "ClusterDataSourceError", err.Error())
 		}
-		return ctrl.Result{}, err
+		return false, err
 	}
 	if requeueDataSource {
 		err = fmt.Errorf("cross-referenced ClusterDataSource %s is not yet ready", client.ObjectKeyFromObject(cd))
 		if r.setCondition(cd, kcmv1.ClusterDataSourceReadyCondition, kcmv1.ProgressingReason, metav1.ConditionFalse, err) {
 			r.warnf(cd, "ClusterDataSourceNotReady", err.Error())
 		}
-		return ctrl.Result{RequeueAfter: r.defaultRequeueTime}, nil
+		return true, nil
 	}
 
 	if err := r.fillHelmValues(scope); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to fill helm values: %w", err)
+		return false, fmt.Errorf("failed to fill helm values: %w", err)
 	}
 
 	if err := r.copyRegionalKubeConfigSecret(ctx, scope); err != nil {
 		r.warnf(cd, "KubeConfigSecretCopyFailed", "Failed to copy regional KubeConfig secret: %v", err)
-		return ctrl.Result{}, fmt.Errorf("failed to copy regional KubeConfig secret: %w", err)
+		return false, fmt.Errorf("failed to copy regional KubeConfig secret: %w", err)
 	}
+
+	return false, nil
+}
+
+func (r *ClusterDeploymentReconciler) reconcileHelmRelease(
+	ctx context.Context,
+	clusterTpl *kcmv1.ClusterTemplate,
+	scope *clusterScope,
+) (ctrl.Result, error) {
+	cd := scope.cd
 
 	hrReconcileOpts, err := r.getHelmReleaseReconcileOpts(clusterTpl, scope)
 	if err != nil {
@@ -906,6 +1005,67 @@ func (r *ClusterDeploymentReconciler) ensureAuthConfigSecret(ctx context.Context
 	return nil
 }
 
+const auditPolicyConfigKey = "policy" // fixed name of the audit policy key, used in the ConfigMap and helm values
+func (r *ClusterDeploymentReconciler) ensureAuditPolicyConfigMap(ctx context.Context, scope *clusterScope) error {
+	if scope.audit == nil || scope.audit.policy == nil {
+		return nil
+	}
+	cd := scope.cd
+
+	data, err := yaml.Marshal(scope.audit.policy)
+	if err != nil {
+		return fmt.Errorf("failed to marshal audit Policy: %w", err)
+	}
+
+	hash := sha256.Sum256(data)
+	scope.audit.hash = hex.EncodeToString(hash[:4])
+
+	owner, err := r.getPartialCapiCluster(ctx, scope.rgnClient, cd)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve the owner: %w", err)
+	}
+	ownerObjectExists := owner != nil
+
+	cmName := r.getAuditPolicyConfigMapName(cd.Name)
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cmName,
+			Namespace: cd.Namespace,
+		},
+	}
+
+	operation, err := controllerutil.CreateOrUpdate(ctx, scope.rgnClient, configMap, func() error {
+		if configMap.Data == nil {
+			configMap.Data = make(map[string]string)
+		}
+
+		configMap.Data = map[string]string{
+			auditPolicyConfigKey: string(data),
+		}
+
+		if ownerObjectExists {
+			if err := controllerutil.SetOwnerReference(owner, configMap, scope.rgnClient.Scheme()); err != nil {
+				return fmt.Errorf("failed to add OwnerReference on ConfigMap %s: %w", client.ObjectKeyFromObject(configMap), err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create or update ConfigMap with the audit Policy: %w", err)
+	}
+
+	if operation == controllerutil.OperationResultCreated {
+		r.eventf(cd, "AuditPolicyConfigMapCreated", "Successfully created ConfigMap with the audit Policy %s/%s", cd.Namespace, cmName)
+	}
+	if operation == controllerutil.OperationResultUpdated {
+		r.eventf(cd, "AuditPolicyConfigMapUpdated", "Successfully updated ConfigMap with the audit Policy %s/%s", cd.Namespace, cmName)
+	}
+	_ = r.setCondition(cd, kcmv1.ClusterAuditPolicyReadyCondition, kcmv1.SucceededReason, metav1.ConditionTrue, nil)
+
+	return nil
+}
+
 func (r *ClusterDeploymentReconciler) fillHelmValues(scope *clusterScope) error {
 	cd := scope.cd
 	cred := scope.cred
@@ -913,6 +1073,7 @@ func (r *ClusterDeploymentReconciler) fillHelmValues(scope *clusterScope) error 
 		// NOTE: values map is guaranteed to be non-nil by AddHelmValues
 
 		r.fillClusterAuthenticationValues(scope, values)
+		r.fillClusterAuditPolicyValues(scope, values)
 		r.fillDataSourceValues(scope, values)
 
 		values["clusterIdentity"] = map[string]any{
@@ -985,8 +1146,46 @@ func (r *ClusterDeploymentReconciler) fillClusterAuthenticationValues(scope *clu
 	values["auth"] = val
 }
 
+// fillClusterAuditPolicyValues passes the audit Policy configuration values to all the ClusterDeployments when
+// an audit policy is configured in the [github.com/K0rdent/kcm/api/v1beta1.ClusterDeployment] spec.
+//
+// Example:
+//
+//	audit:
+//	  policyRef:
+//	    name: audit-policy-configmap
+//	    key: policy
+//	    hash: 2loa83
+func (r *ClusterDeploymentReconciler) fillClusterAuditPolicyValues(scope *clusterScope, values map[string]any) {
+	if scope.audit == nil || scope.audit.policy == nil {
+		if auditValues, ok := values["audit"].(map[string]any); ok {
+			delete(auditValues, "policyRef")
+		}
+		return
+	}
+
+	policyRef := map[string]any{
+		"name": r.getAuditPolicyConfigMapName(scope.cd.Name),
+		"key":  auditPolicyConfigKey,
+		"hash": scope.audit.hash,
+	}
+
+	if auditValues, ok := values["audit"].(map[string]any); ok {
+		auditValues["policyRef"] = policyRef
+		values["audit"] = auditValues
+		return
+	}
+	values["audit"] = map[string]any{
+		"policyRef": policyRef,
+	}
+}
+
 func (*ClusterDeploymentReconciler) getAuthConfigSecretName(cdName string) string {
 	return cdName + "-auth-config"
+}
+
+func (*ClusterDeploymentReconciler) getAuditPolicyConfigMapName(cdName string) string {
+	return cdName + "-audit-policy"
 }
 
 // fillDataSourceValues passes the ClusterDataSource secrets to all the ClusterDeployments if
@@ -1317,7 +1516,8 @@ func handleClusterDeploymentFailedConditions(cond metav1.Condition) (errMsg, war
 		kcmv1.TemplateReadyCondition,
 		kcmv1.DataSourceReadyCondition,
 		kcmv1.ClusterDataSourceReadyCondition,
-		kcmv1.ClusterAuthenticationReadyCondition:
+		kcmv1.ClusterAuthenticationReadyCondition,
+		kcmv1.ClusterAuditPolicyReadyCondition:
 
 		errMsg = cond.Message
 
@@ -2049,6 +2249,27 @@ func (r *ClusterDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	r.defaultRequeueTime = 10 * time.Second
 
+	mapObjectsToClusterDeployments := func(indexKey string) func(ctx context.Context, o client.Object) []ctrl.Request {
+		return func(ctx context.Context, o client.Object) []ctrl.Request {
+			clusterDeployments := new(kcmv1.ClusterDeploymentList)
+			if err := r.MgmtClient.List(ctx, clusterDeployments,
+				client.InNamespace(o.GetNamespace()),
+				client.MatchingFields{indexKey: o.GetName()}); err != nil {
+				return nil
+			}
+			req := make([]ctrl.Request, len(clusterDeployments.Items))
+			for i, cluster := range clusterDeployments.Items {
+				req[i] = ctrl.Request{
+					NamespacedName: client.ObjectKey{
+						Namespace: cluster.Namespace,
+						Name:      cluster.Name,
+					},
+				}
+			}
+			return req
+		}
+	}
+
 	managedController := ctrl.NewControllerManagedBy(mgr).
 		WithOptions(controller.TypedOptions[ctrl.Request]{
 			RateLimiter: ratelimitutil.DefaultFastSlow(),
@@ -2113,50 +2334,23 @@ func (r *ClusterDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			}),
 		).
 		Watches(&kcmv1.Credential{},
-			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []ctrl.Request {
-				clusterDeployments := &kcmv1.ClusterDeploymentList{}
-				err := r.MgmtClient.List(ctx, clusterDeployments,
-					client.InNamespace(o.GetNamespace()),
-					client.MatchingFields{kcmv1.ClusterDeploymentCredentialIndexKey: o.GetName()})
-				if err != nil {
-					return []ctrl.Request{}
-				}
-
-				req := []ctrl.Request{}
-				for _, cluster := range clusterDeployments.Items {
-					req = append(req, ctrl.Request{
-						NamespacedName: client.ObjectKey{
-							Namespace: cluster.Namespace,
-							Name:      cluster.Name,
-						},
-					})
-				}
-
-				return req
-			}),
+			handler.EnqueueRequestsFromMapFunc(mapObjectsToClusterDeployments(kcmv1.ClusterDeploymentCredentialIndexKey)),
 		).
 		Watches(&kcmv1.ClusterAuthentication{},
-			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []ctrl.Request {
-				clusterDeployments := new(kcmv1.ClusterDeploymentList)
-				if err := r.MgmtClient.List(ctx, clusterDeployments,
-					client.InNamespace(o.GetNamespace()),
-					client.MatchingFields{kcmv1.ClusterDeploymentAuthenticationIndexKey: o.GetName()}); err != nil {
-					return nil
-				}
+			handler.EnqueueRequestsFromMapFunc(mapObjectsToClusterDeployments(kcmv1.ClusterDeploymentAuthenticationIndexKey)),
 
-				req := make([]ctrl.Request, len(clusterDeployments.Items))
-				for i, cluster := range clusterDeployments.Items {
-					req[i] = ctrl.Request{
-						NamespacedName: client.ObjectKey{
-							Namespace: cluster.Namespace,
-							Name:      cluster.Name,
-						},
-					}
-				}
-
-				return req
-			}),
 			// NOTE: on deletion of a ClusterAuthentication we should not delete auth-related helm values
+			builder.WithPredicates(predicate.Funcs{
+				GenericFunc: func(event.TypedGenericEvent[client.Object]) bool { return false },
+				DeleteFunc:  func(event.TypedDeleteEvent[client.Object]) bool { return false },
+				UpdateFunc:  func(event.TypedUpdateEvent[client.Object]) bool { return true },
+				CreateFunc:  func(event.TypedCreateEvent[client.Object]) bool { return true },
+			}),
+		).
+		Watches(&kcmv1.ClusterAuditPolicy{},
+			handler.EnqueueRequestsFromMapFunc(mapObjectsToClusterDeployments(kcmv1.ClusterDeploymentAuditPolicyIndexKey)),
+
+			// NOTE: on deletion of a ClusterAuditPolicy we should not delete policy-related helm values
 			builder.WithPredicates(predicate.Funcs{
 				GenericFunc: func(event.TypedGenericEvent[client.Object]) bool { return false },
 				DeleteFunc:  func(event.TypedDeleteEvent[client.Object]) bool { return false },

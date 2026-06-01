@@ -3,6 +3,30 @@
   "description": "A KCM cluster docker-hosted-cp template",
   "type": "object",
   "properties": {
+    "audit": {
+      "description": "Audit logging settings for kube-apiserver, optional",
+      "type": "object",
+      "properties": {
+        "policyRef": {
+          "description": "Reference to the ConfigMap containing the audit policy, auto-populated",
+          "type": "object",
+          "properties": {
+            "hash": {
+              "description": "Hash of the audit policy data stored in the ConfigMap, auto-populated",
+              "type": "string"
+            },
+            "key": {
+              "description": "The data key in the ConfigMap that contains the audit policy, auto-populated",
+              "type": "string"
+            },
+            "name": {
+              "description": "Name of the ConfigMap that stores the audit policy, auto-populated",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
     "clusterAnnotations": {
       "type": "object"
     },

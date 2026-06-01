@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +42,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	apiserverv1 "k8s.io/apiserver/pkg/apis/apiserver/v1"
+	auditv1 "k8s.io/apiserver/pkg/apis/audit/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -95,27 +97,42 @@ var (
 	k0sURLCertSecretData   = map[string][]byte{"data": []byte("test-k0s-url-cert-data")}
 	registryCertSecretData = map[string][]byte{"data": []byte("test-registry-cert-data")}
 
-	authConfiguration = &kcmv1.AuthenticationConfiguration{
-		JWT: []apiserverv1.JWTAuthenticator{
-			{
-				Issuer: apiserverv1.Issuer{
-					URL:       "https://issuer.example.com",
-					Audiences: []string{"example-audience"},
+	authConfiguration = &kcmv1.ClusterAuthenticationSpec{
+		AuthenticationConfiguration: &kcmv1.AuthenticationConfiguration{
+			JWT: []apiserverv1.JWTAuthenticator{
+				{
+					Issuer: apiserverv1.Issuer{
+						URL:       "https://issuer.example.com",
+						Audiences: []string{"example-audience"},
+					},
 				},
 			},
 		},
 	}
-	anonAuthConfiguration = &kcmv1.AuthenticationConfiguration{
-		JWT: []apiserverv1.JWTAuthenticator{
-			{
-				Issuer: apiserverv1.Issuer{
-					URL:       "https://issuer.example.com",
-					Audiences: []string{"example-audience"},
+	anonAuthConfiguration = &kcmv1.ClusterAuthenticationSpec{
+		AuthenticationConfiguration: &kcmv1.AuthenticationConfiguration{
+			JWT: []apiserverv1.JWTAuthenticator{
+				{
+					Issuer: apiserverv1.Issuer{
+						URL:       "https://issuer.example.com",
+						Audiences: []string{"example-audience"},
+					},
 				},
 			},
+			Anonymous: &apiserverv1.AnonymousAuthConfig{
+				Enabled: true,
+			},
 		},
-		Anonymous: &apiserverv1.AnonymousAuthConfig{
-			Enabled: true,
+	}
+	invalidAuthConfiguration = &kcmv1.ClusterAuthenticationSpec{
+		AuthenticationConfiguration: &kcmv1.AuthenticationConfiguration{
+			JWT: []apiserverv1.JWTAuthenticator{
+				{
+					Issuer: apiserverv1.Issuer{
+						URL: "123",
+					},
+				},
+			},
 		},
 	}
 	clAuthCASecretData = []byte("test-cluster-auth-ca-cert-data")
@@ -123,6 +140,33 @@ var (
 	dataSourceCASecretData = []byte("test-data-source-ca-cert-data")
 	dataSourceEndpoints    = []string{"postgres-db1.example.com:5432"}
 )
+
+// customAuditPolicy returns a custom audit policy with specific rules for use in tests.
+func customAuditPolicy() *kcmv1.ClusterAuditPolicySpec {
+	return &kcmv1.ClusterAuditPolicySpec{
+		Policy: kcmv1.Policy{
+			Rules: []auditv1.PolicyRule{
+				{
+					Level: auditv1.LevelMetadata,
+					Resources: []auditv1.GroupResources{
+						{
+							Group:     "",
+							Resources: []string{"secrets", "configmaps"},
+						},
+					},
+				},
+				{
+					Level: auditv1.LevelRequestResponse,
+					Verbs: []string{"create", "update", "delete"},
+				},
+				{
+					Level: auditv1.LevelNone,
+					Users: []string{"system:kube-proxy"},
+				},
+			},
+		},
+	}
+}
 
 type fakeHelmActor struct{}
 
@@ -154,11 +198,12 @@ type cldTestCase struct {
 	isDisabledValidationWH bool
 
 	// ClusterDeployment spec overrides
-	region     string
-	dryRun     bool
-	authConfig *kcmv1.AuthenticationConfiguration
-	dataSource string
-	config     map[string]any
+	region      string
+	dryRun      bool
+	authConfig  *kcmv1.ClusterAuthenticationSpec
+	auditPolicy *kcmv1.ClusterAuditPolicySpec
+	dataSource  string
+	config      map[string]any
 }
 
 // hasGlobalValues reports whether any global override is configured.
@@ -167,7 +212,7 @@ func (tc *cldTestCase) hasGlobalValues() bool {
 		tc.k0sURLCertSecretName != "" || tc.registryCertSecretName != ""
 }
 
-// ensureCredential creates an AWS Credential with ready status and registers cleanup.
+// ensureCredential creates an AWS Credential with ready status.
 func (tc *cldTestCase) ensureCredential(namespace string) *kcmv1.Credential {
 	GinkgoHelper()
 
@@ -201,7 +246,7 @@ func (tc *cldTestCase) ensureCredential(namespace string) *kcmv1.Credential {
 	return cred
 }
 
-// ensureClusterAuthentication creates an ClusterAuthentication object with ready status and registers cleanup.
+// ensureClusterAuthentication creates an ClusterAuthentication object.
 func (tc *cldTestCase) ensureClusterAuthentication(namespace string) *kcmv1.ClusterAuthentication {
 	GinkgoHelper()
 
@@ -210,19 +255,15 @@ func (tc *cldTestCase) ensureClusterAuthentication(namespace string) *kcmv1.Clus
 			GenerateName: "test-cl-auth",
 			Namespace:    namespace,
 		},
-		Spec: kcmv1.ClusterAuthenticationSpec{
-			CASecret: &kcmv1.SecretKeyReference{
-				SecretReference: corev1.SecretReference{
-					Namespace: namespace,
-					Name:      clAuthCASecretName,
-				},
-				Key: clAuthCASecretKey,
-			},
-		},
+		Spec: *tc.authConfig,
 	}
 
-	if tc.authConfig != nil {
-		clAuth.Spec.AuthenticationConfiguration = tc.authConfig
+	clAuth.Spec.CASecret = &kcmv1.SecretKeyReference{
+		SecretReference: corev1.SecretReference{
+			Namespace: namespace,
+			Name:      clAuthCASecretName,
+		},
+		Key: clAuthCASecretKey,
 	}
 
 	Expect(k8sClient.Create(ctx, clAuth)).To(Succeed())
@@ -233,9 +274,29 @@ func (tc *cldTestCase) ensureClusterAuthentication(namespace string) *kcmv1.Clus
 	return clAuth
 }
 
+// ensureClusterAuditPolicy creates a ClusterAuditPolicy object with the given policy.
+func (tc *cldTestCase) ensureClusterAuditPolicy(namespace string) *kcmv1.ClusterAuditPolicy {
+	GinkgoHelper()
+
+	clAuditPolicy := &kcmv1.ClusterAuditPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "test-cl-audit-policy-",
+			Namespace:    namespace,
+		},
+		Spec: *tc.auditPolicy,
+	}
+
+	Expect(k8sClient.Create(ctx, clAuditPolicy)).To(Succeed())
+	Eventually(func(g Gomega) {
+		g.Expect(mgrClient.Get(ctx, crclient.ObjectKeyFromObject(clAuditPolicy), clAuditPolicy)).To(Succeed())
+	}).Should(Succeed())
+
+	return clAuditPolicy
+}
+
 // ensureClusterDeployment creates a ClusterDeployment with the given spec overrides.
 // Returns the created ClusterDeployment.
-func (tc *cldTestCase) ensureClusterDeployment(namespace, clusterTemplateName, credentialName, clAuthName string) *kcmv1.ClusterDeployment {
+func (tc *cldTestCase) ensureClusterDeployment(namespace, clusterTemplateName, credentialName, clAuthName, auditPolicyName string) *kcmv1.ClusterDeployment {
 	GinkgoHelper()
 
 	cld := &kcmv1.ClusterDeployment{
@@ -249,6 +310,9 @@ func (tc *cldTestCase) ensureClusterDeployment(namespace, clusterTemplateName, c
 			ClusterAuth: clAuthName,
 			DryRun:      tc.dryRun,
 		},
+	}
+	if auditPolicyName != "" {
+		cld.Spec.AuditPolicy = auditPolicyName
 	}
 	if tc.dataSource != "" {
 		cld.Spec.DataSource = tc.dataSource
@@ -496,7 +560,7 @@ func (tc *cldTestCase) testClusterDeploymentReconciliation(reconciler *ClusterDe
 		By("Should create the secret with authentication configuration", func() {
 			secretName := cld.Name + "-auth-config"
 
-			rawAuthConfData, err := json.Marshal(tc.authConfig)
+			rawAuthConfData, err := json.Marshal(tc.authConfig.GetAuthConfig())
 			Expect(err).NotTo(HaveOccurred())
 
 			var expectedAuthConfData apiserverv1.AuthenticationConfiguration
@@ -512,6 +576,39 @@ func (tc *cldTestCase) testClusterDeploymentReconciliation(reconciler *ClusterDe
 				secret := &corev1.Secret{}
 				g.Expect(mgrClient.Get(ctx, types.NamespacedName{Namespace: cld.Namespace, Name: secretName}, secret)).To(Succeed())
 				g.Expect(string(secret.Data[authConfigSecretKey])).To(MatchYAML(string(data)))
+			}).Should(Succeed())
+		})
+	}
+
+	if tc.auditPolicy != nil {
+		By("Should create the ConfigMap with audit policy", func() {
+			expectedData, err := yaml.Marshal(*tc.auditPolicy.GetPolicy())
+			Expect(err).NotTo(HaveOccurred())
+
+			cmName := cld.Name + "-audit-policy"
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(mgrClient.Get(ctx, types.NamespacedName{Namespace: cld.Namespace, Name: cmName}, cm)).To(Succeed())
+				g.Expect(cm.Data).To(HaveKey("policy"))
+				g.Expect(cm.Data["policy"]).To(MatchYAML(string(expectedData)))
+			}).Should(Succeed())
+		})
+
+		By("Should set ClusterAuditPolicyReady condition to true", func() {
+			Eventually(func(g Gomega) {
+				g.Expect(mgrClient.Get(ctx, cldName, cld)).To(Succeed())
+				g.Expect(cld).Should(
+					HaveField("Status.Conditions", ContainElement(SatisfyAll(
+						HaveField("Type", kcmv1.ClusterAuditPolicyReadyCondition),
+						HaveField("Status", metav1.ConditionTrue),
+						HaveField("Reason", kcmv1.SucceededReason),
+					))))
+			}).Should(Succeed())
+		})
+	} else {
+		By("Should not create the ConfigMap with audit policy", func() {
+			Eventually(func(g Gomega) {
+				g.Expect(mgrClient.Get(ctx, types.NamespacedName{Namespace: cld.Namespace, Name: cld.Name + "-audit-policy"}, &corev1.ConfigMap{})).To(Satisfy(apierrors.IsNotFound))
 			}).Should(Succeed())
 		})
 	}
@@ -947,6 +1044,8 @@ func (tc *cldTestCase) testClusterDeploymentCleanup(reconciler *ClusterDeploymen
 // buildExpectedHelmReleaseValues constructs the expected Helm values map for a
 // given test case, credential, and ClusterDeployment name.
 func (tc *cldTestCase) buildExpectedHelmReleaseValues(cred *kcmv1.Credential, cldName string) map[string]any {
+	GinkgoHelper()
+
 	expected := map[string]any{
 		"clusterIdentity": map[string]any{
 			"namespace":  cred.Spec.IdentityRef.Namespace,
@@ -970,6 +1069,20 @@ func (tc *cldTestCase) buildExpectedHelmReleaseValues(cred *kcmv1.Credential, cl
 
 	if tc.authConfig != nil {
 		expected["auth"] = buildExpectedAuthValues(cldName, tc.authConfig)
+	}
+
+	if tc.auditPolicy != nil {
+		data, err := yaml.Marshal(*tc.auditPolicy.GetPolicy())
+		Expect(err).NotTo(HaveOccurred())
+		hash := sha256.Sum256(data)
+
+		expected["audit"] = map[string]any{
+			"policyRef": map[string]any{
+				"name": cldName + "-audit-policy",
+				"key":  auditPolicyConfigKey,
+				"hash": hex.EncodeToString(hash[:4]),
+			},
+		}
 	}
 
 	if tc.dataSource != "" {
@@ -1216,7 +1329,15 @@ var _ = Describe("ClusterDeployment Controller", Ordered, func() {
 				DeferCleanup(k8sClient.Delete, clAuth)
 				clAuthName = clAuth.Name
 			}
-			cld := tc.ensureClusterDeployment(namespace.Name, clusterTemplate.Name, awsCredential.Name, clAuthName)
+
+			auditPolicyName := ""
+			if tc.auditPolicy != nil {
+				clAuditPolicy := tc.ensureClusterAuditPolicy(namespace.Name)
+				DeferCleanup(k8sClient.Delete, clAuditPolicy)
+				auditPolicyName = clAuditPolicy.Name
+			}
+
+			cld := tc.ensureClusterDeployment(namespace.Name, clusterTemplate.Name, awsCredential.Name, clAuthName, auditPolicyName)
 			DeferCleanup(func() error { return crclient.IgnoreNotFound(k8sClient.Delete(ctx, cld)) })
 
 			cldName := types.NamespacedName{Namespace: namespace.Name, Name: cld.Name}
@@ -1275,6 +1396,13 @@ var _ = Describe("ClusterDeployment Controller", Ordered, func() {
 					"customField2": "customValue2",
 				},
 				"customField3": "customValue3",
+			},
+		}),
+		Entry("ClusterDeployment with custom audit policy", cldTestCase{
+			auditPolicy: customAuditPolicy(),
+			authConfig:  authConfiguration,
+			config: map[string]any{
+				"customField1": "customValue1",
 			},
 		}),
 	)
@@ -1391,7 +1519,7 @@ func deleteClusterDeployment(cldName types.NamespacedName) {
 	})
 }
 
-// ensureSecret creates a Secret with the given data and registers cleanup.
+// ensureSecret creates a Secret with the given data.
 func ensureSecret(namespace, name string, data map[string][]byte) *corev1.Secret {
 	GinkgoHelper()
 
@@ -1417,8 +1545,8 @@ func newSecretRef(namespace, name, key string) *kcmv1.SecretKeyReference {
 	}
 }
 
-// ensureClusterTemplate creates a ClusterTemplate with the given HelmChart reference
-// and registers cleanup. Returns the created cluster template with status populated.
+// ensureClusterTemplate creates a ClusterTemplate with the given HelmChart reference.
+// Returns the created cluster template with status populated.
 func ensureClusterTemplate(namespace, helmChartName string) *kcmv1.ClusterTemplate {
 	GinkgoHelper()
 
@@ -1505,8 +1633,10 @@ func setCredentialReadyStatus(cred *kcmv1.Credential, ready bool) {
 
 // buildExpectedAuthValues constructs the expected "auth" section of Helm values
 // for the given auth configuration.
-func buildExpectedAuthValues(cldName string, authCfg *kcmv1.AuthenticationConfiguration) map[string]any {
+func buildExpectedAuthValues(cldName string, clAuthSpec *kcmv1.ClusterAuthenticationSpec) map[string]any {
 	GinkgoHelper()
+
+	authCfg := clAuthSpec.GetAuthConfig()
 
 	authConfCopy := authCfg.DeepCopy()
 	for i := range authConfCopy.JWT {
@@ -2056,6 +2186,343 @@ func Test_detectHelmChartNameChange(t *testing.T) {
 				}
 			} else if cond != nil {
 				t.Errorf("expected %s condition to not be set, but got: %+v", kcmv1.HelmChartNameChangedCondition, cond)
+			}
+		})
+	}
+}
+
+func Test_fillClusterAuditPolicyValues(t *testing.T) {
+	cdName := "test-cd"
+	r := &ClusterDeploymentReconciler{}
+
+	tests := []struct {
+		name           string
+		scope          *clusterScope
+		values         map[string]any
+		expectedValues map[string]any
+	}{
+		{
+			name: "audit nil - policyRef removed but other audit values preserved",
+			scope: &clusterScope{
+				audit: nil,
+				cd:    &kcmv1.ClusterDeployment{ObjectMeta: metav1.ObjectMeta{Name: cdName}},
+			},
+			values: map[string]any{
+				"audit": map[string]any{
+					"policyRef": map[string]any{"name": "old", "key": "old", "hash": "old"},
+					"logPath":   "/var/log/audit",
+				},
+			},
+			expectedValues: map[string]any{
+				"audit": map[string]any{
+					"logPath": "/var/log/audit",
+				},
+			},
+		},
+		{
+			name: "audit.policy nil - policyRef removed but other audit values preserved",
+			scope: &clusterScope{
+				audit: &auditConfig{policy: nil},
+				cd:    &kcmv1.ClusterDeployment{ObjectMeta: metav1.ObjectMeta{Name: cdName}},
+			},
+			values: map[string]any{
+				"audit": map[string]any{
+					"policyRef": map[string]any{"name": "old"},
+					"logPath":   "-",
+				},
+			},
+			expectedValues: map[string]any{
+				"audit": map[string]any{
+					"logPath": "-",
+				},
+			},
+		},
+		{
+			name: "audit nil - no audit key in values, nothing happens",
+			scope: &clusterScope{
+				audit: nil,
+				cd:    &kcmv1.ClusterDeployment{ObjectMeta: metav1.ObjectMeta{Name: cdName}},
+			},
+			values:         map[string]any{"foo": "bar"},
+			expectedValues: map[string]any{"foo": "bar"},
+		},
+		{
+			name: "audit with policy - policyRef is set, existing audit values preserved",
+			scope: &clusterScope{
+				audit: &auditConfig{policy: &auditv1.Policy{}, hash: "abc123"},
+				cd:    &kcmv1.ClusterDeployment{ObjectMeta: metav1.ObjectMeta{Name: cdName}},
+			},
+			values: map[string]any{
+				"audit": map[string]any{
+					"logPath": "/var/log/audit.log",
+				},
+			},
+			expectedValues: map[string]any{
+				"audit": map[string]any{
+					"logPath": "/var/log/audit.log",
+					"policyRef": map[string]any{
+						"name": cdName + "-audit-policy",
+						"key":  "policy",
+						"hash": "abc123",
+					},
+				},
+			},
+		},
+		{
+			name: "audit with policy - no existing audit key, audit map created",
+			scope: &clusterScope{
+				audit: &auditConfig{policy: &auditv1.Policy{}, hash: "def456"},
+				cd:    &kcmv1.ClusterDeployment{ObjectMeta: metav1.ObjectMeta{Name: cdName}},
+			},
+			values: map[string]any{},
+			expectedValues: map[string]any{
+				"audit": map[string]any{
+					"policyRef": map[string]any{
+						"name": cdName + "-audit-policy",
+						"key":  "policy",
+						"hash": "def456",
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r.fillClusterAuditPolicyValues(tt.scope, tt.values)
+			if !reflect.DeepEqual(tt.values, tt.expectedValues) {
+				t.Errorf("expected values %v, got %v", tt.expectedValues, tt.values)
+			}
+		})
+	}
+}
+
+func Test_getClusterScope(t *testing.T) {
+	const (
+		namespace = "test-ns"
+		credName  = "test-cred"
+		auditName = "test-audit-policy"
+		authName  = "test-auth"
+		dsName    = "test-datasource"
+	)
+
+	baseCred := &kcmv1.Credential{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      credName,
+			Namespace: namespace,
+		},
+		Spec: kcmv1.CredentialSpec{
+			IdentityRef: &corev1.ObjectReference{
+				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta2",
+				Kind:       "AWSClusterStaticIdentity",
+				Name:       "foo",
+			},
+		},
+	}
+
+	validAuditPolicy := &kcmv1.ClusterAuditPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      auditName,
+			Namespace: namespace,
+		},
+		Spec: *customAuditPolicy(),
+	}
+
+	invalidAuditPolicy := &kcmv1.ClusterAuditPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      auditName,
+			Namespace: namespace,
+		},
+		Spec: kcmv1.ClusterAuditPolicySpec{
+			Policy: kcmv1.Policy{
+				Rules: []auditv1.PolicyRule{
+					{
+						Level: "wrong",
+					},
+				},
+			},
+		},
+	}
+
+	clusterAuth := &kcmv1.ClusterAuthentication{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      authName,
+			Namespace: namespace,
+		},
+		Spec: *authConfiguration,
+	}
+
+	invalidClusterAuth := &kcmv1.ClusterAuthentication{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      authName,
+			Namespace: namespace,
+		},
+		Spec: *invalidAuthConfiguration,
+	}
+
+	baseDataSource := &kcmv1.DataSource{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      dsName,
+			Namespace: namespace,
+		},
+	}
+
+	tests := []struct {
+		name                   string
+		cd                     *kcmv1.ClusterDeployment
+		objects                []crclient.Object
+		isDisabledValidationWH bool
+		expectErrMsg           string
+		expectConditionType    string
+		expectConditionStatus  metav1.ConditionStatus
+	}{
+		{
+			name: "missing credential sets CredentialReady=False and persists status",
+			cd: &kcmv1.ClusterDeployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cd", Namespace: namespace},
+				Spec:       kcmv1.ClusterDeploymentSpec{Credential: credName},
+			},
+			objects:               nil,
+			expectErrMsg:          fmt.Sprintf("failed to get Credential %s/%s: credentials.k0rdent.mirantis.com \"%s\" not found", namespace, credName, credName),
+			expectConditionType:   kcmv1.CredentialReadyCondition,
+			expectConditionStatus: metav1.ConditionFalse,
+		},
+		{
+			name: "missing DataSource sets DataSourceReady=False and persists status",
+			cd: &kcmv1.ClusterDeployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cd", Namespace: namespace},
+				Spec: kcmv1.ClusterDeploymentSpec{
+					Credential: credName,
+					DataSource: dsName,
+				},
+			},
+			objects:               []crclient.Object{baseCred},
+			expectErrMsg:          fmt.Sprintf("failed to get DataSource %s/%s: datasources.k0rdent.mirantis.com \"%s\" not found", namespace, dsName, dsName),
+			expectConditionType:   kcmv1.DataSourceReadyCondition,
+			expectConditionStatus: metav1.ConditionFalse,
+		},
+		{
+			name: "missing ClusterAuthentication sets ClusterAuthenticationReady=False and persists status",
+			cd: &kcmv1.ClusterDeployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cd", Namespace: namespace},
+				Spec: kcmv1.ClusterDeploymentSpec{
+					Credential:  credName,
+					ClusterAuth: authName,
+				},
+			},
+			objects:               []crclient.Object{baseCred},
+			expectErrMsg:          fmt.Sprintf("failed to get ClusterAuthentication %s/%s: clusterauthentications.k0rdent.mirantis.com \"%s\" not found", namespace, authName, authName),
+			expectConditionType:   kcmv1.ClusterAuthenticationReadyCondition,
+			expectConditionStatus: metav1.ConditionFalse,
+		},
+		{
+			name: "invalid ClusterAuthentication with disabled webhook sets ClusterAuthentication=False and returns errNoRetrigger",
+			cd: &kcmv1.ClusterDeployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cd", Namespace: namespace},
+				Spec: kcmv1.ClusterDeploymentSpec{
+					Credential:  credName,
+					ClusterAuth: authName,
+				},
+			},
+			objects:                []crclient.Object{baseCred, invalidClusterAuth},
+			isDisabledValidationWH: true,
+			expectErrMsg:           "validation failed with webhooks disabled, will not retrigger",
+			expectConditionType:    kcmv1.ClusterAuthenticationReadyCondition,
+			expectConditionStatus:  metav1.ConditionFalse,
+		},
+		{
+			name: "missing ClusterAuditPolicy sets ClusterAuditPolicyReady=False and persists status",
+			cd: &kcmv1.ClusterDeployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cd", Namespace: namespace},
+				Spec: kcmv1.ClusterDeploymentSpec{
+					Credential:  credName,
+					AuditPolicy: auditName,
+				},
+			},
+			objects:               []crclient.Object{baseCred},
+			expectErrMsg:          fmt.Sprintf("failed to get ClusterAuditPolicy %s/%s: clusterauditpolicies.k0rdent.mirantis.com \"%s\" not found", namespace, auditName, auditName),
+			expectConditionType:   kcmv1.ClusterAuditPolicyReadyCondition,
+			expectConditionStatus: metav1.ConditionFalse,
+		},
+		{
+			name: "invalid ClusterAuditPolicy with disabled webhook sets ClusterAuditPolicyReady=False and returns errNoRetrigger",
+			cd: &kcmv1.ClusterDeployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cd", Namespace: namespace},
+				Spec: kcmv1.ClusterDeploymentSpec{
+					Credential:  credName,
+					AuditPolicy: auditName,
+				},
+			},
+			objects:                []crclient.Object{baseCred, invalidAuditPolicy},
+			isDisabledValidationWH: true,
+			expectErrMsg:           "validation failed with webhooks disabled, will not retrigger",
+			expectConditionType:    kcmv1.ClusterAuditPolicyReadyCondition,
+			expectConditionStatus:  metav1.ConditionFalse,
+		},
+		{
+			name: "all references exist returns scope successfully",
+			cd: &kcmv1.ClusterDeployment{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cd", Namespace: namespace},
+				Spec: kcmv1.ClusterDeploymentSpec{
+					Credential:  credName,
+					DataSource:  dsName,
+					ClusterAuth: authName,
+					AuditPolicy: auditName,
+				},
+			},
+			objects: []crclient.Object{baseCred, baseDataSource, clusterAuth, validAuditPolicy},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objects := make([]crclient.Object, 0, len(tt.objects)+1)
+			objects = append(objects, tt.cd.DeepCopy())
+			objects = append(objects, tt.objects...)
+
+			c := fake.NewClientBuilder().
+				WithScheme(testscheme.Scheme).
+				WithObjects(objects...).
+				WithStatusSubresource(&kcmv1.ClusterDeployment{}).
+				Build()
+
+			r := &ClusterDeploymentReconciler{
+				MgmtClient:             c,
+				IsDisabledValidationWH: tt.isDisabledValidationWH,
+			}
+
+			cd := &kcmv1.ClusterDeployment{}
+			if err := c.Get(context.Background(), crclient.ObjectKeyFromObject(tt.cd), cd); err != nil {
+				t.Fatalf("failed to get ClusterDeployment: %v", err)
+			}
+
+			scope, err := r.getClusterScope(ctx, cd)
+
+			if tt.expectErrMsg != "" {
+				if err.Error() != tt.expectErrMsg {
+					t.Fatalf("expected error message '%s', got: '%s'", tt.expectErrMsg, err.Error())
+				}
+
+				cond := meta.FindStatusCondition(cd.Status.Conditions, tt.expectConditionType)
+				if cond == nil {
+					t.Fatalf("expected condition %s to be persisted, but it was not found", tt.expectConditionType)
+				}
+				if cond.Status != tt.expectConditionStatus {
+					t.Errorf("expected condition status %s, got %s", tt.expectConditionStatus, cond.Status)
+				}
+				if scope != nil {
+					t.Error("expected nil scope on error")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if scope == nil {
+					t.Fatal("expected non-nil scope")
+				}
+				if scope.cd != cd {
+					t.Error("scope.cd does not match input ClusterDeployment")
+				}
 			}
 		})
 	}

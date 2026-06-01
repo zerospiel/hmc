@@ -38,6 +38,14 @@ spec:
         permissions: "0644"
         path: {{ include "encryption-config.fullpath" . }}
       {{- end }}
+      {{- if .Values.audit.policyRef.name }}
+      - contentFrom:
+          configMapRef:
+            name: {{ .Values.audit.policyRef.name  | quote }}
+            key: {{ default "policy" .Values.audit.policyRef.key  | quote }}
+        permissions: "0644"
+        path: {{ include "audit-policy.fullpath" . }}
+      {{- end }}
       {{- if $global.registryCredentialSecret }}
       - contentFrom:
           secretRef:
@@ -173,6 +181,13 @@ spec:
     preStartCommands:
     - "sudo update-ca-certificates"
     {{- end }}
+    {{- if and .Values.audit.policyRef.name .Values.audit.logPath (ne .Values.audit.logPath "-") }}
+    {{- $logPath := .Values.audit.logPath }}
+    {{- $logDir := dir $logPath }}
+    postStartCommands:
+    - 'sudo mkdir -p {{ $logDir }}'
+    - 'sudo chown kube-apiserver:kube-apiserver {{ $logDir }}'
+    {{- end }}
     args:
       - --enable-worker
       - --enable-cloud-provider
@@ -199,6 +214,23 @@ spec:
             encryption-provider-config: {{ include "encryption-config.fullpath" . }}
             {{- if .Values.encryption.automaticReload }}
             encryption-provider-config-automatic-reload: "true"
+            {{- end }}
+            {{- end }}
+            {{- if .Values.audit.policyRef.name }}
+            audit-policy-file: {{ include "audit-policy.fullpath" . }}
+            {{- with .Values.audit.logPath }}
+            audit-log-path: {{ . | quote }}
+            {{- end }}
+            {{- if and .Values.audit.logPath (ne .Values.audit.logPath "-") }}
+            {{- with .Values.audit.logMaxAge }}
+            audit-log-maxage: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.audit.logMaxBackup }}
+            audit-log-maxbackup: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.audit.logMaxSize }}
+            audit-log-maxsize: {{ . | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- with .Values.k0s.api.extraArgs }}
