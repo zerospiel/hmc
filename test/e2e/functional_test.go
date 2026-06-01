@@ -112,8 +112,38 @@ var _ = Describe("Functional e2e tests", Label("provider:cloud", "provider:docke
 			},
 		})
 
-		for i, v := range nginxVersions {
-			name := fmt.Sprintf("%s-%s", nginxChartName, strings.ReplaceAll(v, ".", "-"))
+		supportedTemplates = make([]kcmv1.SupportedTemplate, 0, len(nginxVersions))
+
+		for i := range nginxVersions {
+			name := fmt.Sprintf("%s-%s", nginxChartName, strings.ReplaceAll(nginxVersions[i], ".", "-"))
+
+			st := kcmv1.SupportedTemplate{
+				Name: name,
+			}
+
+			if i == len(nginxVersions)-1 {
+				supportedTemplates = append(supportedTemplates, st)
+				continue
+			}
+
+			nextName := fmt.Sprintf("%s-%s", nginxChartName, strings.ReplaceAll(nginxVersions[i+1], ".", "-"))
+			st.AvailableUpgrades = append(st.AvailableUpgrades, kcmv1.AvailableUpgrade{
+				Name:    nextName,
+				Version: nginxVersions[i+1],
+			})
+
+			if i == 0 && len(nginxVersions) > 2 {
+				skipName := fmt.Sprintf("%s-%s", nginxChartName, strings.ReplaceAll(nginxVersions[i+2], ".", "-"))
+				st.AvailableUpgrades = append(st.AvailableUpgrades, kcmv1.AvailableUpgrade{
+					Name:    skipName,
+					Version: nginxVersions[i+2],
+				})
+			}
+
+			supportedTemplates = append(supportedTemplates, st)
+		}
+
+		for _, v := range nginxVersions {
 			serviceTemplateSpecs = append(serviceTemplateSpecs, kcmv1.ServiceTemplateSpec{
 				Helm: &kcmv1.HelmSpec{
 					ChartSpec: &sourcev1.HelmChartSpec{
@@ -125,20 +155,6 @@ var _ = Describe("Functional e2e tests", Label("provider:cloud", "provider:docke
 						Version: v,
 					},
 				},
-			})
-
-			var upgrades []kcmv1.AvailableUpgrade
-			for j := i + 1; j < len(nginxVersions); j++ {
-				nv := nginxVersions[j]
-				upgrades = append(upgrades, kcmv1.AvailableUpgrade{
-					Name:    fmt.Sprintf("%s-%s", nginxChartName, strings.ReplaceAll(nv, ".", "-")),
-					Version: nv,
-				})
-			}
-
-			supportedTemplates = append(supportedTemplates, kcmv1.SupportedTemplate{
-				Name:              name,
-				AvailableUpgrades: upgrades,
 			})
 		}
 

@@ -34,6 +34,123 @@ import (
 
 const testSystemNamespace = "test-system-ns"
 
+func TestMinimumUpgradeStep(t *testing.T) {
+	t.Parallel()
+
+	// Shared upgrade paths: ingress-nginx with a two-hop path 4.11.5 → 4.12.3
+	// and a single-hop path directly to each version.
+	ingressUpgradePaths := []kcmv1.ServiceUpgradePaths{
+		{
+			Name: "ingress-nginx",
+			AvailableUpgrades: []kcmv1.UpgradePath{
+				{
+					Versions: []kcmv1.AvailableUpgrade{
+						{Name: "ingress-nginx-4-11-5", Version: "4.11.5"},
+					},
+				},
+				{
+					Versions: []kcmv1.AvailableUpgrade{
+						{Name: "ingress-nginx-4-12-3", Version: "4.12.3"},
+					},
+				},
+				{
+					Versions: []kcmv1.AvailableUpgrade{
+						{Name: "ingress-nginx-4-11-5", Version: "4.11.5"},
+						{Name: "ingress-nginx-4-12-3", Version: "4.12.3"},
+					},
+				},
+			},
+		},
+	}
+
+	tests := map[string]struct {
+		upgradePaths    []kcmv1.ServiceUpgradePaths
+		name            string
+		namespace       string
+		current         string
+		desired         string
+		expectedVersion string
+		expectedName    string
+	}{
+		"sequential upgrade enforced (dead branch fix)": {
+			upgradePaths:    ingressUpgradePaths,
+			name:            "ingress-nginx",
+			current:         "4.11.3",
+			desired:         "4.12.3",
+			expectedVersion: "4.11.5",
+			expectedName:    "ingress-nginx-4-11-5",
+		},
+		"direct upgrade when no intermediate exists": {
+			upgradePaths:    ingressUpgradePaths,
+			name:            "ingress-nginx",
+			current:         "4.11.5",
+			desired:         "4.12.3",
+			expectedVersion: "4.12.3",
+			expectedName:    "ingress-nginx-4-12-3",
+		},
+		"no valid upgrade": {
+			upgradePaths: ingressUpgradePaths,
+			name:         "ingress-nginx",
+			current:      "4.12.3",
+			desired:      "4.11.3",
+		},
+		// #2613: smallest candidate (2.0.0) is on a dead-end branch with no path
+		// to the desired version (3.0.0); the function must skip it and pick 3.0.0.
+		"dead-end branch avoided when no cross-branch path exists": {
+			upgradePaths: []kcmv1.ServiceUpgradePaths{
+				{
+					Name: "my-app",
+					AvailableUpgrades: []kcmv1.UpgradePath{
+						{
+							Versions: []kcmv1.AvailableUpgrade{
+								{Name: "my-app-2-0-0", Version: "2.0.0"},
+							},
+						},
+						{
+							Versions: []kcmv1.AvailableUpgrade{
+								{Name: "my-app-3-0-0", Version: "3.0.0"},
+							},
+						},
+					},
+				},
+			},
+			name:            "my-app",
+			current:         "1.0.0",
+			desired:         "3.0.0",
+			expectedVersion: "3.0.0",
+			expectedName:    "my-app-3-0-0",
+		},
+		"namespace mismatch returns no upgrade": {
+			upgradePaths: []kcmv1.ServiceUpgradePaths{
+				{
+					Name:      "my-app",
+					Namespace: "team-a",
+					AvailableUpgrades: []kcmv1.UpgradePath{
+						{
+							Versions: []kcmv1.AvailableUpgrade{
+								{Name: "my-app-2-0-0", Version: "2.0.0"},
+							},
+						},
+					},
+				},
+			},
+			name:      "my-app",
+			namespace: "team-b",
+			current:   "1.0.0",
+			desired:   "2.0.0",
+		},
+	}
+
+	for testName, tt := range tests {
+		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+			result := minimumUpgradeStep(tt.upgradePaths, tt.name, tt.namespace, tt.current, tt.desired)
+			require.Equal(t, tt.expectedVersion, result.Version)
+			require.Equal(t, tt.expectedName, result.Name)
+		})
+	}
+}
+
 func Test_ServicesToDeploy(t *testing.T) {
 	t.Parallel()
 

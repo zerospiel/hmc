@@ -131,13 +131,8 @@ func (s *TemplateChainSpec) findAllUpgradePaths(templateName string) ([][]Availa
 
 		// Iterate through available upgrades and find subsequent available upgrades
 		for _, upgrade := range template.AvailableUpgrades {
-			if !slices.ContainsFunc(path, func(upgrade AvailableUpgrade) bool {
-				for _, u := range path {
-					if u.Name == upgrade.Name && u.Version == upgrade.Version {
-						return true
-					}
-				}
-				return false
+			if !slices.ContainsFunc(path, func(u AvailableUpgrade) bool {
+				return u.Name == upgrade.Name && u.Version == upgrade.Version
 			}) {
 				upgradePath := make([]AvailableUpgrade, len(path)+1)
 				copy(upgradePath, path)
