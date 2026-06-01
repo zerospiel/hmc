@@ -730,12 +730,17 @@ func (r *ServiceSetReconciler) updateServicesInReadyStateCondition(serviceSet *k
 	}
 	totalCount := len(serviceSet.Spec.Services)
 	svcReadyCond := findCondition(serviceSet, kcmv1.ServicesInReadyStateCondition)
-	svcReadyStatus := metav1.ConditionFalse
-	if totalCount > 0 && deployedCount == totalCount {
-		svcReadyStatus = metav1.ConditionTrue
+	svcReadyStatus := metav1.ConditionTrue
+	if deployedCount != totalCount {
+		svcReadyStatus = metav1.ConditionFalse
 	}
-	updateCondition(serviceSet, svcReadyCond, svcReadyStatus, kcmv1.ServicesInReadyStateCondition,
-		fmt.Sprintf("%d/%d", deployedCount, totalCount), r.timeFunc())
+
+	// update condition only if deployed <= total to avoid scenarios where
+	// a service is removed from spec but is still present in the status.
+	if deployedCount <= totalCount {
+		updateCondition(serviceSet, svcReadyCond, svcReadyStatus, kcmv1.ServicesInReadyStateCondition,
+			fmt.Sprintf("%d/%d", deployedCount, totalCount), r.timeFunc())
+	}
 }
 
 func getClusterSummaryForServiceSet(ctx context.Context, rgnClient client.Client, serviceSet *kcmv1.ServiceSet, profileObj client.Object) (*addoncontrollerv1beta1.ClusterSummary, error) {
