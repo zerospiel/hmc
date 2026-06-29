@@ -50,6 +50,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 	"sigs.k8s.io/yaml"
@@ -64,6 +65,7 @@ import (
 	conditionsutil "github.com/K0rdent/kcm/internal/util/conditions"
 	kubeutil "github.com/K0rdent/kcm/internal/util/kube"
 	labelsutil "github.com/K0rdent/kcm/internal/util/labels"
+	pollerutil "github.com/K0rdent/kcm/internal/util/poller"
 	ratelimitutil "github.com/K0rdent/kcm/internal/util/ratelimit"
 	schemeutil "github.com/K0rdent/kcm/internal/util/scheme"
 	validationutil "github.com/K0rdent/kcm/internal/util/validation"
@@ -105,8 +107,9 @@ type ClusterDeploymentReconciler struct {
 	RegistryCertSecretName    string // Name of a Secret with Registry Root CA with ca.crt key
 	CldRegistryCredSecretName string
 
-	DefaultHelmTimeout time.Duration
-	defaultRequeueTime time.Duration
+	DefaultHelmTimeout      time.Duration
+	CAPIClusterPollInterval time.Duration // interval for the periodic CAPI Cluster status poller; 0 disables the poller
+	defaultRequeueTime      time.Duration
 
 	IsDisabledValidationWH bool // is webhook disabled set via the controller flags
 }
@@ -1310,15 +1313,28 @@ func (r *ClusterDeploymentReconciler) aggregateCapiConditions(ctx context.Contex
 	}
 	if len(clusters.Items) == 0 {
 		// Do not always set a failed condition here: a ClusterTemplate may not have a Cluster object.
-		// Instead, set the condition only if previously existed with the Deleting reason (e.g., when the Cluster was deleted).
+		// If a previous CAPIClusterSummary condition exists, surface the disappearance:
+		// - promote Deleting -> DeletionCompleted (cluster has finished going away)
+		// - otherwise mark the underlying Cluster as Missing (deleted out-of-band while the CD is alive)
 		if cond := apimeta.FindStatusCondition(*conditions, kcmv1.CAPIClusterSummaryCondition); cond != nil {
-			if cond.Reason == clusterapiv1.DeletingReason {
+			switch cond.Reason {
+			case kcmv1.DeletingReason:
 				apimeta.SetStatusCondition(conditions, metav1.Condition{
 					Type:               kcmv1.CAPIClusterSummaryCondition,
 					Status:             metav1.ConditionTrue,
 					Reason:             kcmv1.DeletionCompletedReason,
 					ObservedGeneration: cd.Generation,
 					Message:            "Cluster was deleted",
+				})
+			case kcmv1.CAPIClusterMissingReason, kcmv1.DeletionCompletedReason:
+				// already reflected; nothing to do
+			default:
+				apimeta.SetStatusCondition(conditions, metav1.Condition{
+					Type:               kcmv1.CAPIClusterSummaryCondition,
+					Status:             metav1.ConditionFalse,
+					Reason:             kcmv1.CAPIClusterMissingReason,
+					ObservedGeneration: cd.Generation,
+					Message:            "Underlying CAPI Cluster object is missing",
 				})
 			}
 		}
@@ -1968,7 +1984,8 @@ func (r *ClusterDeploymentReconciler) setAvailableUpgrades(ctx context.Context, 
 	}
 
 	chains := new(kcmv1.ClusterTemplateChainList)
-	if err := r.MgmtClient.List(ctx, chains,
+	if err := r.MgmtClient.List(
+		ctx, chains,
 		client.InNamespace(clusterTpl.Namespace),
 		client.MatchingFields{kcmv1.TemplateChainSupportedTemplatesIndexKey: clusterTpl.Name},
 	); err != nil {
@@ -2094,7 +2111,8 @@ func (r *ClusterDeploymentReconciler) processClusterIPAM(ctx context.Context, cd
 		}
 		if clusterIpamClaim.Spec.Cluster != cd.Name {
 			return errors.Join(errInvalidIPAMClaimRef, fmt.Errorf(
-				"ClusterIPAMClaim.Spec.Cluster %s does not match ClusterDeployment.Name %s", clusterIpamClaim.Spec.Cluster, cd.Name))
+				"ClusterIPAMClaim.Spec.Cluster %s does not match ClusterDeployment.Name %s", clusterIpamClaim.Spec.Cluster, cd.Name,
+			))
 		}
 	}
 
@@ -2293,7 +2311,8 @@ func (r *ClusterDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				return oldCDS.Status != newCDS.Status
 			},
 		})).
-		Watches(&helmcontrollerv2.HelmRelease{},
+		Watches(
+			&helmcontrollerv2.HelmRelease{},
 			kubeutil.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) ([]ctrl.Request, error) {
 				clusterDeploymentRef := client.ObjectKeyFromObject(o)
 				if err := r.MgmtClient.Get(ctx, clusterDeploymentRef, &kcmv1.ClusterDeployment{}); err != nil {
@@ -2306,7 +2325,8 @@ func (r *ClusterDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				return []ctrl.Request{{NamespacedName: clusterDeploymentRef}}, nil
 			}),
 		).
-		Watches(&kcmv1.ClusterTemplateChain{},
+		Watches(
+			&kcmv1.ClusterTemplateChain{},
 			kubeutil.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) ([]ctrl.Request, error) {
 				chain, ok := o.(*kcmv1.ClusterTemplateChain)
 				if !ok {
@@ -2337,10 +2357,12 @@ func (r *ClusterDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				GenericFunc: func(event.GenericEvent) bool { return false },
 			}),
 		).
-		Watches(&kcmv1.Credential{},
+		Watches(
+			&kcmv1.Credential{},
 			kubeutil.EnqueueRequestsFromMapFunc(mapObjectsToClusterDeployments(kcmv1.ClusterDeploymentCredentialIndexKey)),
 		).
-		Watches(&kcmv1.ClusterAuthentication{},
+		Watches(
+			&kcmv1.ClusterAuthentication{},
 			kubeutil.EnqueueRequestsFromMapFunc(mapObjectsToClusterDeployments(kcmv1.ClusterDeploymentAuthenticationIndexKey)),
 
 			// NOTE: on deletion of a ClusterAuthentication we should not delete auth-related helm values
@@ -2351,7 +2373,8 @@ func (r *ClusterDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				CreateFunc:  func(event.TypedCreateEvent[client.Object]) bool { return true },
 			}),
 		).
-		Watches(&kcmv1.ClusterAuditPolicy{},
+		Watches(
+			&kcmv1.ClusterAuditPolicy{},
 			kubeutil.EnqueueRequestsFromMapFunc(mapObjectsToClusterDeployments(kcmv1.ClusterDeploymentAuditPolicyIndexKey)),
 
 			// NOTE: on deletion of a ClusterAuditPolicy we should not delete policy-related helm values
@@ -2362,27 +2385,28 @@ func (r *ClusterDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				CreateFunc:  func(event.TypedCreateEvent[client.Object]) bool { return true },
 			}),
 		).
-		Watches(&kcmv1.Region{}, kubeutil.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) ([]ctrl.Request, error) {
-			creds := new(kcmv1.CredentialList)
-			if err := r.MgmtClient.List(ctx, creds, client.MatchingFields{kcmv1.CredentialRegionIndexKey: o.GetName()}); err != nil {
-				return nil, fmt.Errorf("failed to list Credentials for Region %s: %w", o.GetName(), err)
-			}
-
-			reqs := []ctrl.Request{}
-			for _, cred := range creds.Items {
-				clds := new(kcmv1.ClusterDeploymentList)
-				if err := r.MgmtClient.List(ctx, clds,
-					client.MatchingFields{kcmv1.ClusterDeploymentCredentialIndexKey: cred.Name},
-					client.InNamespace(cred.Namespace)); err != nil {
-					return nil, fmt.Errorf("failed to list ClusterDeployments for Credential %s/%s: %w", cred.Namespace, cred.Name, err)
+		Watches(
+			&kcmv1.Region{}, kubeutil.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) ([]ctrl.Request, error) {
+				creds := new(kcmv1.CredentialList)
+				if err := r.MgmtClient.List(ctx, creds, client.MatchingFields{kcmv1.CredentialRegionIndexKey: o.GetName()}); err != nil {
+					return nil, fmt.Errorf("failed to list Credentials for Region %s: %w", o.GetName(), err)
 				}
-				for _, cld := range clds.Items {
-					reqs = append(reqs, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&cld)})
-				}
-			}
 
-			return reqs, nil
-		}),
+				reqs := []ctrl.Request{}
+				for _, cred := range creds.Items {
+					clds := new(kcmv1.ClusterDeploymentList)
+					if err := r.MgmtClient.List(ctx, clds,
+						client.MatchingFields{kcmv1.ClusterDeploymentCredentialIndexKey: cred.Name},
+						client.InNamespace(cred.Namespace)); err != nil {
+						return nil, fmt.Errorf("failed to list ClusterDeployments for Credential %s/%s: %w", cred.Namespace, cred.Name, err)
+					}
+					for _, cld := range clds.Items {
+						reqs = append(reqs, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&cld)})
+					}
+				}
+
+				return reqs, nil
+			}),
 			builder.WithPredicates(predicate.Funcs{
 				GenericFunc: func(event.TypedGenericEvent[client.Object]) bool { return false },
 				CreateFunc:  func(event.TypedCreateEvent[client.Object]) bool { return false },
@@ -2408,6 +2432,20 @@ func (r *ClusterDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		setupLog.Info("Validations are disabled, watcher for ServiceTemplate objects is set")
 		managedController.WatchesRawSource(r.templatesValidUpdateSource(mgr.GetClient(), mgr.GetCache(), &kcmv1.ClusterTemplate{}))
 		setupLog.Info("Validations are disabled, watcher for ClusterTemplate objects is set")
+	}
+
+	if r.CAPIClusterPollInterval > 0 {
+		capiPoller := pollerutil.NewRunner(
+			r.capiClusterPollEnqueue,
+			pollerutil.WithInterval(r.CAPIClusterPollInterval),
+			pollerutil.WithName("clusterdeployment_capi_poller"),
+		)
+
+		if err := mgr.Add(capiPoller); err != nil {
+			return fmt.Errorf("failed to add ClusterDeployment CAPI Cluster poller: %w", err)
+		}
+
+		managedController.WatchesRawSource(source.TypedChannel(capiPoller.GetEventChannel(), &handler.TypedEnqueueRequestForObject[*kcmv1.ClusterDeployment]{}))
 	}
 
 	return managedController.Complete(r)
