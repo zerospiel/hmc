@@ -49,7 +49,7 @@ jobs:
       public_repo:    ${{ steps.get_config.outputs.public_repo }}
     steps:
       - name: Install yq
-        uses: mikefarah/yq@8bf425b4d1344db7cd469a8d10a390876e0c77fd # v4.45.1
+        uses: mikefarah/yq@1b9b4ac5187171d2e5e3129be0cfa827c7f9d53d # v4.53.3
 
       - name: Get testing configuration from maintainer approval comment
         id: get_config
@@ -104,7 +104,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Checkout matrix builder action only, NOT PR code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # base branch ref, never PR head
           ref: ${{ github.event.pull_request.base.sha }}
@@ -186,7 +186,7 @@ jobs:
       clusterprefix:   ${{ steps.vars.outputs.clusterprefix }}
     steps:
       - name: Get PR merge commit SHA
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         id: pr
         with:
           script: |
@@ -197,11 +197,13 @@ jobs:
             return pullRequest.merge_commit_sha;
 
       - name: Checkout merge commit
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ fromJSON(steps.pr.outputs.result) }}
           fetch-depth: 0
           persist-credentials: false
+          # PR merge commit contains fork code; pull_request_target trust comes from the e2e-gate environment approval, not from the checkout default
+          allow-unsafe-pr-checkout: true
 
       - name: Derive version and cluster prefix
         id: vars
@@ -230,13 +232,15 @@ jobs:
     env:
       REGISTRY_REPO: oci://ghcr.io/k0rdent/kcm/charts-ci
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           ref: ${{ needs.vars.outputs.pr_merge_commit }}
           persist-credentials: false
+          # PR merge commit contains fork code; pull_request_target trust comes from the e2e-gate environment approval, not from the checkout default
+          allow-unsafe-pr-checkout: true
 
-      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
       - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
@@ -244,14 +248,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: '**/go.sum'
 
       - name: Cache GoReleaser binary
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /opt/hostedtoolcache/goreleaser
           key: goreleaser-${{ runner.os }}-${{ runner.arch }}-v2
@@ -259,7 +263,7 @@ jobs:
             goreleaser-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build and push controller + telemetry images
-        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         env:
           GITHUB_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
           REGISTRY:             ghcr.io/k0rdent/kcm
@@ -301,15 +305,17 @@ jobs:
     env:
       PUBLIC_REPO: ${{ needs.gate.outputs.public_repo == 'true' }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           ref: ${{ needs.vars.outputs.pr_merge_commit }}
           persist-credentials: false
+          # PR merge commit contains fork code; pull_request_target trust comes from the e2e-gate environment approval, not from the checkout default
+          allow-unsafe-pr-checkout: true
 
-      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
+      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
 
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: true
@@ -333,7 +339,7 @@ jobs:
 
       - name: Archive test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: support-bundles-mothership
           path: "/home/runner/work/kcm/kcm/support-bundle-*"
@@ -410,11 +416,13 @@ jobs:
       VSPHERE_NETWORK:                ${{ secrets.CI_VSPHERE_NETWORK }}
       VSPHERE_SSH_KEY:                ${{ secrets.CI_VSPHERE_SSH_KEY }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           ref: ${{ needs.vars.outputs.pr_merge_commit }}
           persist-credentials: false
+          # PR merge commit contains fork code; pull_request_target trust comes from the e2e-gate environment approval, not from the checkout default
+          allow-unsafe-pr-checkout: true
 
       - name: Set public registry env variables
         if: ${{ env.PUBLIC_REPO == 'true' }}
@@ -425,18 +433,18 @@ jobs:
             echo "IMG_TELEMETRY=ghcr.io/k0rdent/kcm/telemetry-ci:${{ needs.vars.outputs.version }}"
           } >> "$GITHUB_ENV"
 
-      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
+      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
 
       - name: Setup Go (cache disabled)
         if: ${{ matrix.class == 'onprem' }}
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Setup Go (with module cache)
         if: ${{ matrix.class != 'onprem' }}
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: true
@@ -456,7 +464,7 @@ jobs:
 
       - name: Archive test results (GH-hosted runner)
         if: ${{ matrix.class != 'onprem' && always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: support-bundles-${{ matrix.provider }}
           path: "/home/runner/work/kcm/kcm/support-bundle-*"
@@ -465,7 +473,7 @@ jobs:
 
       - name: Archive test results (onprem runner)
         if: ${{ matrix.class == 'onprem' && always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: support-bundles-${{ matrix.provider }}
           path: "/home/gh-runner/actions-runner/_work/kcm/kcm/support-bundle-*"
@@ -513,19 +521,21 @@ jobs:
       AZURE_CLIENT_ID:        ${{ secrets.CI_AZURE_CLIENT_ID }}
       AZURE_CLIENT_SECRET:    ${{ secrets.CI_AZURE_CLIENT_SECRET }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           ref: ${{ needs.vars.outputs.pr_merge_commit }}
           persist-credentials: false
+          # PR merge commit contains fork code; pull_request_target trust comes from the e2e-gate environment approval, not from the checkout default
+          allow-unsafe-pr-checkout: true
 
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Cache nuke binaries
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             bin/cloud-nuke-*

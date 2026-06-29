@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Add needs-triage if not triage-ok
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         if: ${{ github.event.issue.state == 'open' && !contains(github.event.issue.labels.*.name, 'triage-ok') }}
         with:
           retries: 3
@@ -28,7 +28,7 @@ jobs:
             })
 
       - name: Remove needs-triage if triage-ok
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         if: ${{ github.event.issue.state == 'open' && contains(github.event.issue.labels.*.name, 'triage-ok') && contains(github.event.issue.labels.*.name, 'needs-triage') }}
         with:
           retries: 3
@@ -41,7 +41,7 @@ jobs:
             })
 
       - name: Remove needs-triage if closed
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         if: ${{ github.event.issue.state == 'closed' && contains(github.event.issue.labels.*.name, 'needs-triage') }}
         with:
           retries: 3
@@ -54,7 +54,7 @@ jobs:
             })
 
       - name: Remove triage-ok if closed
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         if: ${{ github.event.issue.state == 'closed' && contains(github.event.issue.labels.*.name, 'triage-ok') }}
         with:
           retries: 3
