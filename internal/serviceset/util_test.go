@@ -647,56 +647,6 @@ func Test_FilterServiceDependencies(t *testing.T) {
 			expected: []testService{a, b},
 		},
 		{
-			testName:        "service A deployed & B provisioning in different servicesets when B->A",
-			desiredServices: []testService{a, b.dependsOn(a)},
-			objects: []client.Object{
-				&kcmv1.ServiceSet{
-					ObjectMeta: metav1.ObjectMeta{Namespace: cd.GetNamespace(), Name: cd.GetName()},
-					Spec:       kcmv1.ServiceSetSpec{Cluster: cd.GetName()},
-					Status: kcmv1.ServiceSetStatus{
-						Services: []kcmv1.ServiceState{
-							{Namespace: a.Namespace, Name: a.Name, State: kcmv1.ServiceStateDeployed},
-						},
-					},
-				},
-				&kcmv1.ServiceSet{
-					ObjectMeta: metav1.ObjectMeta{Namespace: cd.GetNamespace(), Name: cd.GetName() + "-7sc4gx"},
-					Spec:       kcmv1.ServiceSetSpec{Cluster: cd.GetName()},
-					Status: kcmv1.ServiceSetStatus{
-						Services: []kcmv1.ServiceState{
-							{Namespace: b.Namespace, Name: b.Name, State: kcmv1.ServiceStateProvisioning},
-						},
-					},
-				},
-			},
-			expected: []testService{a, b},
-		},
-		{
-			testName:        "service A & B deployed in different servicesets when B->A",
-			desiredServices: []testService{a, b.dependsOn(a)},
-			objects: []client.Object{
-				&kcmv1.ServiceSet{
-					ObjectMeta: metav1.ObjectMeta{Namespace: cd.GetNamespace(), Name: cd.GetName()},
-					Spec:       kcmv1.ServiceSetSpec{Cluster: cd.GetName()},
-					Status: kcmv1.ServiceSetStatus{
-						Services: []kcmv1.ServiceState{
-							{Namespace: a.Namespace, Name: a.Name, State: kcmv1.ServiceStateDeployed},
-						},
-					},
-				},
-				&kcmv1.ServiceSet{
-					ObjectMeta: metav1.ObjectMeta{Namespace: cd.GetNamespace(), Name: cd.GetName() + "-7sc4gx"},
-					Spec:       kcmv1.ServiceSetSpec{Cluster: cd.GetName()},
-					Status: kcmv1.ServiceSetStatus{
-						Services: []kcmv1.ServiceState{
-							{Namespace: b.Namespace, Name: b.Name, State: kcmv1.ServiceStateDeployed},
-						},
-					},
-				},
-			},
-			expected: []testService{a, b},
-		},
-		{
 			// A is failing. B (depends on A) is deployed at its current version.
 			// C (depends on A) was never deployed.
 			// Because A is not Deployed, B and C both have unsatisfied dependencies and
@@ -1023,28 +973,18 @@ func Test_FilterServiceDependencies_Operation(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Namespace: cd.GetNamespace(), Name: cd.GetName()},
 				Spec:       kcmv1.ServiceSetSpec{Cluster: cd.GetName()},
 			}
-			ssetMCS := &kcmv1.ServiceSet{
-				ObjectMeta: metav1.ObjectMeta{Namespace: cd.GetNamespace(), Name: cd.GetName() + "gswge"},
-				Spec:       kcmv1.ServiceSetSpec{Cluster: cd.GetName()},
-			}
 
 			for itr := range tc.expectedServices {
-				// Divide expected services between 2 ServiceSets targeting the same cluster,
-				// where one serviceset belongs to ClusterDeployment and the other to MultiClusterService.
-				for j, svc := range filtered {
+				for _, svc := range filtered {
 					sstate := kcmv1.ServiceState{
 						Namespace: svc.Namespace, Name: svc.Name, State: kcmv1.ServiceStateDeployed,
 					}
-					if j%2 == 0 {
-						ssetCD.Status.Services = append(ssetCD.Status.Services, sstate)
-					} else {
-						ssetMCS.Status.Services = append(ssetMCS.Status.Services, sstate)
-					}
+					ssetCD.Status.Services = append(ssetCD.Status.Services, sstate)
 				}
 
 				client := fake.NewClientBuilder().
 					WithScheme(scheme).
-					WithObjects(ssetCD, ssetMCS).
+					WithObjects(ssetCD).
 					WithIndex(&kcmv1.ServiceSet{}, kcmv1.ServiceSetClusterIndexKey, kcmv1.ExtractServiceSetCluster).
 					Build()
 
@@ -1767,6 +1707,209 @@ func Test_FilterServiceDependencies_UpgradeOrdering(t *testing.T) {
 				names[i] = svc.Name
 			}
 			require.ElementsMatch(t, tc.expected, names)
+		})
+	}
+}
+
+func Test_fetchServiceSet(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(kcmv1.AddToScheme(scheme))
+
+	const (
+		sysNS   = "kcm-system"
+		cdName  = "my-cd"
+		cdNS    = "my-cd-ns"
+		mcsName = "my-mcs"
+	)
+
+	newClient := func(objects ...client.Object) client.Client {
+		return fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(objects...).
+			WithIndex(&kcmv1.ServiceSet{}, kcmv1.ServiceSetClusterIndexKey, kcmv1.ExtractServiceSetCluster).
+			WithIndex(&kcmv1.ServiceSet{}, kcmv1.ServiceSetMultiClusterServiceIndexKey, kcmv1.ExtractServiceSetMultiClusterService).
+			Build()
+	}
+
+	cd := &kcmv1.ClusterDeployment{
+		ObjectMeta: metav1.ObjectMeta{Name: cdName, Namespace: cdNS},
+	}
+	mcs := &kcmv1.MultiClusterService{
+		ObjectMeta: metav1.ObjectMeta{Name: mcsName},
+	}
+
+	tests := []struct {
+		name    string
+		mcs     *kcmv1.MultiClusterService
+		cd      *kcmv1.ClusterDeployment
+		objects []client.Object
+		// wantEmpty means we expect the zero-value ServiceSet — no ServiceSet found.
+		wantEmpty   bool
+		wantErr     bool
+		wantCluster string
+		wantMCS     string
+	}{
+		// Case 2: cd set, mcs nil — returns the cd-specific ServiceSet (no .spec.multiClusterService).
+		{
+			name:      "case2: no ServiceSets → nil",
+			cd:        cd,
+			wantEmpty: true,
+		},
+		{
+			name: "case2: one cd-only ServiceSet → returned",
+			cd:   cd,
+			objects: []client.Object{
+				&kcmv1.ServiceSet{
+					ObjectMeta: metav1.ObjectMeta{Namespace: cdNS, Name: "ss-cd"},
+					Spec:       kcmv1.ServiceSetSpec{Cluster: cdName},
+				},
+			},
+			wantCluster: cdName,
+		},
+		{
+			name: "case2: cd-only ServiceSet plus mcs ServiceSet for same cluster → cd-only ServiceSet returned",
+			cd:   cd,
+			objects: []client.Object{
+				&kcmv1.ServiceSet{
+					ObjectMeta: metav1.ObjectMeta{Namespace: cdNS, Name: "ss-cd"},
+					Spec:       kcmv1.ServiceSetSpec{Cluster: cdName},
+				},
+				// The mcs ServiceSet is returned by the cluster-index query but must be filtered out
+				// because .spec.multiClusterService is set (case 2 comment in fetchServiceSet).
+				&kcmv1.ServiceSet{
+					ObjectMeta: metav1.ObjectMeta{Namespace: cdNS, Name: "ss-mcs"},
+					Spec:       kcmv1.ServiceSetSpec{Cluster: cdName, MultiClusterService: "other-mcs"},
+				},
+			},
+			wantCluster: cdName,
+		},
+		{
+			name: "case2: two cd-only ServiceSets → error",
+			cd:   cd,
+			objects: []client.Object{
+				&kcmv1.ServiceSet{
+					ObjectMeta: metav1.ObjectMeta{Namespace: cdNS, Name: "ss-1"},
+					Spec:       kcmv1.ServiceSetSpec{Cluster: cdName},
+				},
+				&kcmv1.ServiceSet{
+					ObjectMeta: metav1.ObjectMeta{Namespace: cdNS, Name: "ss-2"},
+					Spec:       kcmv1.ServiceSetSpec{Cluster: cdName},
+				},
+			},
+			wantErr: true,
+		},
+
+		// Case 3: mcs set, cd nil — returns the unique self-management ServiceSet for the mcs.
+		{
+			name:      "case3: no ServiceSets → nil",
+			mcs:       mcs,
+			wantEmpty: true,
+		},
+		{
+			name: "case3: one mcs ServiceSet → returned",
+			mcs:  mcs,
+			objects: []client.Object{
+				&kcmv1.ServiceSet{
+					ObjectMeta: metav1.ObjectMeta{Namespace: sysNS, Name: "ss-mcs"},
+					Spec:       kcmv1.ServiceSetSpec{MultiClusterService: mcsName},
+				},
+			},
+			wantMCS: mcsName,
+		},
+		{
+			// Real-world self-management scenario: a per-cluster ServiceSet for the same MCS
+			// exists in the system namespace (a CD also lives in sysNS). The self-management
+			// ServiceSet (empty .spec.cluster) must be returned, not the per-cluster one.
+			name: "case3: self-management ServiceSet plus per-cluster ServiceSet in sysNS → self-management returned",
+			mcs:  mcs,
+			objects: []client.Object{
+				&kcmv1.ServiceSet{
+					ObjectMeta: metav1.ObjectMeta{Namespace: sysNS, Name: "ss-self-mgmt"},
+					Spec:       kcmv1.ServiceSetSpec{MultiClusterService: mcsName},
+				},
+				// Per-cluster ServiceSet for a CD that happens to live in the system namespace.
+				&kcmv1.ServiceSet{
+					ObjectMeta: metav1.ObjectMeta{Namespace: sysNS, Name: "ss-per-cluster"},
+					Spec:       kcmv1.ServiceSetSpec{Cluster: "some-cd-in-sysns", MultiClusterService: mcsName},
+				},
+			},
+			wantMCS: mcsName,
+		},
+		{
+			name: "case3: two mcs ServiceSets → error",
+			mcs:  mcs,
+			objects: []client.Object{
+				&kcmv1.ServiceSet{
+					ObjectMeta: metav1.ObjectMeta{Namespace: sysNS, Name: "ss-mcs-1"},
+					Spec:       kcmv1.ServiceSetSpec{MultiClusterService: mcsName},
+				},
+				&kcmv1.ServiceSet{
+					ObjectMeta: metav1.ObjectMeta{Namespace: sysNS, Name: "ss-mcs-2"},
+					Spec:       kcmv1.ServiceSetSpec{MultiClusterService: mcsName},
+				},
+			},
+			wantErr: true,
+		},
+
+		// Case 4: both cd and mcs set — returns the unique ServiceSet created by the
+		// MultiClusterController for the mcs matching the cd.
+		{
+			name:      "case4: no ServiceSets → nil",
+			cd:        cd,
+			mcs:       mcs,
+			wantEmpty: true,
+		},
+		{
+			name: "case4: one ServiceSet with both cd and mcs → returned",
+			cd:   cd,
+			mcs:  mcs,
+			objects: []client.Object{
+				&kcmv1.ServiceSet{
+					ObjectMeta: metav1.ObjectMeta{Namespace: cdNS, Name: "ss-cd-mcs"},
+					Spec:       kcmv1.ServiceSetSpec{Cluster: cdName, MultiClusterService: mcsName},
+				},
+			},
+			wantCluster: cdName,
+			wantMCS:     mcsName,
+		},
+		{
+			name: "case4: two ServiceSets with same cd and mcs → error",
+			cd:   cd,
+			mcs:  mcs,
+			objects: []client.Object{
+				&kcmv1.ServiceSet{
+					ObjectMeta: metav1.ObjectMeta{Namespace: cdNS, Name: "ss-cd-mcs-1"},
+					Spec:       kcmv1.ServiceSetSpec{Cluster: cdName, MultiClusterService: mcsName},
+				},
+				&kcmv1.ServiceSet{
+					ObjectMeta: metav1.ObjectMeta{Namespace: cdNS, Name: "ss-cd-mcs-2"},
+					Spec:       kcmv1.ServiceSetSpec{Cluster: cdName, MultiClusterService: mcsName},
+				},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cl := newClient(tt.objects...)
+			got, err := fetchServiceSet(t.Context(), cl, sysNS, tt.mcs, tt.cd)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			if tt.wantEmpty {
+				require.Empty(t, got.Name, "expected zero-value ServiceSet (not found)")
+				return
+			}
+			require.NotEmpty(t, got.Name, "expected a ServiceSet to be returned")
+			require.Equal(t, tt.wantCluster, got.Spec.Cluster, "unexpected .spec.cluster")
+			require.Equal(t, tt.wantMCS, got.Spec.MultiClusterService, "unexpected .spec.multiClusterService")
 		})
 	}
 }
