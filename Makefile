@@ -553,6 +553,10 @@ dev-azure-nuke: envsubst azure-nuke ## Nuke Azure resources deployed by dev-mclu
 	$(AZURENUKE) run --config config/dev/azure-cloud-nuke.yaml --force --no-dry-run
 	@rm config/dev/azure-cloud-nuke.yaml
 
+.PHONY: dev-vsphere-nuke
+dev-vsphere-nuke: govc ## Nuke vSphere VMs deployed by dev-mcluster-apply (matches VMs named ${CLUSTER_NAME}-* under ${VSPHERE_FOLDER}).
+	@CLUSTER_NAME=$(CLUSTER_NAME) GOVC=$(GOVC) $(SHELL) $(CURDIR)/scripts/vsphere-nuke.sh
+
 ##@ Dependencies
 
 ## Location to install dependencies to
@@ -666,6 +670,7 @@ ADDLICENSE ?= $(LOCALBIN)/addlicense-$(ADDLICENSE_VERSION)
 ENVSUBST ?= $(LOCALBIN)/envsubst-$(ENVSUBST_VERSION)
 AWSCLI ?= $(LOCALBIN)/aws-$(AWSCLI_VERSION)
 SUPPORT_BUNDLE_CLI ?= $(LOCALBIN)/support-bundle-$(SUPPORT_BUNDLE_CLI_VERSION)
+GOVC ?= $(LOCALBIN)/govc-$(GOVC_VERSION)
 
 ## Tool Versions
 CONTROLLER_TOOLS_VERSION ?= v0.17.2
@@ -684,9 +689,10 @@ ADDLICENSE_VERSION ?= v1.1.1
 ENVSUBST_VERSION ?= v1.4.2
 AWSCLI_VERSION ?= 2.17.42
 SUPPORT_BUNDLE_CLI_VERSION ?= v0.117.0
+GOVC_VERSION ?= v0.51.0
 
 .PHONY: cli-install
-cli-install: controller-gen envtest golangci-lint helm kind yq cloud-nuke azure-nuke clusterawsadm clusterctl addlicense envsubst awscli ## Install all required CLI tools.
+cli-install: controller-gen envtest golangci-lint helm kind yq cloud-nuke azure-nuke govc clusterawsadm clusterctl addlicense envsubst awscli ## Install all required CLI tools.
 
 .PHONY: helm-plugin-schema
 helm-plugin-schema: HELM_SCHEMA_PLUGIN_URL ?= https://github.com/losisin/helm-values-schema-json.git
@@ -757,6 +763,18 @@ $(CLOUDNUKE): | $(LOCALBIN)
 azure-nuke: $(AZURENUKE) ## Download azure-nuke locally if necessary.
 $(AZURENUKE): | $(LOCALBIN)
 	$(call go-install-tool,$(AZURENUKE),github.com/ekristen/azure-nuke,$(AZURENUKE_VERSION))
+
+.PHONY: govc
+govc: $(GOVC) ## Download govc (vSphere CLI) locally if necessary.
+$(GOVC): | $(LOCALBIN)
+	rm -f $(LOCALBIN)/govc-*
+	@os=$$(uname | awk '{print toupper(substr($$0,1,1)) tolower(substr($$0,2))}'); \
+	arch=$$(uname -m); [ "$$arch" = "aarch64" ] && arch=arm64; \
+	url="https://github.com/vmware/govmomi/releases/download/$(GOVC_VERSION)/govc_$${os}_$${arch}.tar.gz"; \
+	echo "Downloading $${url}"; \
+	curl -sSL --fail "$${url}" | tar -xz -C $(LOCALBIN) govc
+	mv $(LOCALBIN)/govc $(GOVC)
+	chmod +x $(GOVC)
 
 .PHONY: clusterawsadm
 clusterawsadm: $(CLUSTERAWSADM) ## Download clusterawsadm locally if necessary.

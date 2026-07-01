@@ -203,7 +203,7 @@ a cluster can fetch manifests, controller image and helm charts.
 Example command:
 
 ```bash
-make KIND_CLUSTER_NAME="kcm-test" CLUSTER_DEPLOYMENT_PREFIX="<your-cluster-name-prefix>" GINKGO_LABEL_FILTER="<optional>" IMG="ghcr.io/k0rdent/kcm/controller-ci:<version-from-ci>" IMG_TELEMETRY="ghcr.io/k0rdent/kcm/telemetry-ci:<version-from-ci>" VERSION=<version-from-ci> REGISTRY_REPO="oci://ghcr.io/k0rdent/kcm/charts-ci" set-kcm-version test-e2e
+make KIND_CLUSTER_NAME="kcm-test" CLUSTER_DEPLOYMENT_PREFIX="<your-cluster-name-prefix>" GINKGO_LABEL_FILTER="<optional>" IMG="ghcr.io/k0rdent/kcm/staging/controller:<version-from-ci>" IMG_TELEMETRY="ghcr.io/k0rdent/kcm/staging/telemetry:<version-from-ci>" VERSION=<version-from-ci> REGISTRY_REPO="oci://ghcr.io/k0rdent/kcm/staging" set-kcm-version test-e2e
 ```
 
 Substitute with a proper version from the CI run.
@@ -277,8 +277,9 @@ to `ghcr.io/k0rdent/kcm` so that the jobs within the E2E phase have access to
 them. The job is conditional and runs only if `test-e2e` label is set on a PR and another job,
 `authorize`, has been approved. The latter starts only if the former is set.
 
-- CI charts are uploaded to `ghcr.io/k0rdent/kcm/charts-ci`
-- KCM Controller image is uploaded to `ghcr.io/k0rdent/kcm/controller-ci`
+- CI charts are uploaded to `ghcr.io/k0rdent/kcm/staging`
+- KCM Controller image is uploaded to `ghcr.io/k0rdent/kcm/staging/controller`
+- KCM Telemetry image is uploaded to `ghcr.io/k0rdent/kcm/staging/telemetry`
 
 All other tests within the workflow require this job to pass before they are
 scheduled to run.

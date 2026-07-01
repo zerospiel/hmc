@@ -85,23 +85,14 @@ jobs:
           GIT_VERSION=$(git describe --tags --always)
           echo "version=${GIT_VERSION#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Cache GoReleaser binary
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: /opt/hostedtoolcache/goreleaser
-          key: goreleaser-${{ runner.os }}-${{ runner.arch }}-v2
-          restore-keys: |
-            goreleaser-${{ runner.os }}-${{ runner.arch }}-
-
       - name: Build and push KCM controller image to the public repository
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REGISTRY: ghcr.io/k0rdent/kcm/staging
-          IMAGE_NAME: controller
-          TELEMETRY_IMAGE_NAME: telemetry
           VERSION: ${{ steps.version.outputs.version }}
           SKIP_SCM_RELEASE: true
+          SEGMENT_TOKEN: ${{ secrets.SEGMENT_TOKEN_DEV }}
         with:
           distribution: goreleaser
           version: '~> v2'
@@ -119,3 +110,26 @@ jobs:
           make set-templates-repo
           make kcm-chart-release
           make helm-push
+
+      # publish rendered release.yaml as a workflow artifact (see #2808);
+      # branch pushes only, tags carry their own release.yaml via .github/workflows/release.yml
+      - name: Render release.yaml
+        if: ${{ github.ref_type == 'branch' }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          make OUTPUT=./release.yaml generate-release
+          echo "Rendered release.yaml (head):"
+          head -n 20 ./release.yaml
+
+      - name: Upload release.yaml as workflow artifact
+        if: ${{ github.ref_type == 'branch' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # stable name; downstream consumers can hard-code it
+          name: release-yaml-staging
+          path: ./release.yaml
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true

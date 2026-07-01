@@ -230,7 +230,7 @@ jobs:
       contents: read
       packages: write
     env:
-      REGISTRY_REPO: oci://ghcr.io/k0rdent/kcm/charts-ci
+      REGISTRY_REPO: oci://ghcr.io/k0rdent/kcm/staging
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -254,24 +254,14 @@ jobs:
           cache: true
           cache-dependency-path: '**/go.sum'
 
-      - name: Cache GoReleaser binary
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: /opt/hostedtoolcache/goreleaser
-          key: goreleaser-${{ runner.os }}-${{ runner.arch }}-v2
-          restore-keys: |
-            goreleaser-${{ runner.os }}-${{ runner.arch }}-
-
       - name: Build and push controller + telemetry images
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         env:
-          GITHUB_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
-          REGISTRY:             ghcr.io/k0rdent/kcm
-          IMAGE_NAME:           controller-ci
-          TELEMETRY_IMAGE_NAME: telemetry-ci
-          VERSION:              ${{ needs.vars.outputs.version }}
-          SKIP_SCM_RELEASE:     'true'
-          SKIP_ARM:             ${{ needs.gate.outputs.skip_arm }}
+          GITHUB_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY:         ghcr.io/k0rdent/kcm/staging
+          VERSION:          ${{ needs.vars.outputs.version }}
+          SKIP_SCM_RELEASE: 'true'
+          SKIP_ARM:         ${{ needs.gate.outputs.skip_arm }}
         with:
           distribution: goreleaser
           version: '~> v2'
@@ -282,69 +272,6 @@ jobs:
           set -euo pipefail
           make kcm-chart-release
           make helm-push
-
-  mothership-e2etest:
-    # runs in parallel with provider-e2etest
-    name: E2E / Mothership
-    runs-on: ${{ needs.gate.outputs.runner || 'ubuntu-latest' }}
-    needs:
-      - gate
-      - wait-for-ci
-      - vars
-      - push-public
-    if: |
-      always() &&
-      contains( github.event.pull_request.labels.*.name, 'test e2e') &&
-      needs.wait-for-ci.result == 'success' &&
-      (needs.push-public.result == 'success' || needs.push-public.result == 'skipped')
-    permissions:
-      contents: read
-    concurrency:
-      group: e2e-mothership-${{ github.head_ref || github.run_id }}
-      cancel-in-progress: true
-    env:
-      PUBLIC_REPO: ${{ needs.gate.outputs.public_repo == 'true' }}
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.vars.outputs.pr_merge_commit }}
-          persist-credentials: false
-          # PR merge commit contains fork code; pull_request_target trust comes from the e2e-gate environment approval, not from the checkout default
-          allow-unsafe-pr-checkout: true
-
-      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
-
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: '**/go.sum'
-
-      - name: Set public registry env variables
-        if: ${{ env.PUBLIC_REPO == 'true' }}
-        run: |
-          {
-            echo "REGISTRY_REPO=oci://ghcr.io/k0rdent/kcm/charts-ci"
-            echo "IMG=ghcr.io/k0rdent/kcm/controller-ci:${{ needs.vars.outputs.version }}"
-            echo "IMG_TELEMETRY=ghcr.io/k0rdent/kcm/telemetry-ci:${{ needs.vars.outputs.version }}"
-          } >> "$GITHUB_ENV"
-
-      - name: Run mothership tests
-        env:
-          GINKGO_LABEL_FILTER:       'mothership'
-          CLUSTER_DEPLOYMENT_PREFIX: ${{ needs.vars.outputs.clusterprefix }}
-          VERSION:                   ${{ needs.vars.outputs.version }}
-        run: make test-e2e
-
-      - name: Archive test results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: support-bundles-mothership
-          path: "/home/runner/work/kcm/kcm/support-bundle-*"
-          retention-days: 1
-          overwrite: true
 
   provider-e2etest:
     # per-provider matrix leg, each under its own e2e-<provider> env
@@ -428,9 +355,9 @@ jobs:
         if: ${{ env.PUBLIC_REPO == 'true' }}
         run: |
           {
-            echo "REGISTRY_REPO=oci://ghcr.io/k0rdent/kcm/charts-ci"
-            echo "IMG=ghcr.io/k0rdent/kcm/controller-ci:${{ needs.vars.outputs.version }}"
-            echo "IMG_TELEMETRY=ghcr.io/k0rdent/kcm/telemetry-ci:${{ needs.vars.outputs.version }}"
+            echo "REGISTRY_REPO=oci://ghcr.io/k0rdent/kcm/staging"
+            echo "IMG=ghcr.io/k0rdent/kcm/staging/controller:${{ needs.vars.outputs.version }}"
+            echo "IMG_TELEMETRY=ghcr.io/k0rdent/kcm/staging/telemetry:${{ needs.vars.outputs.version }}"
           } >> "$GITHUB_ENV"
 
       - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
@@ -496,10 +423,12 @@ jobs:
       always() &&
       needs.gate.outputs.cleanup_matrix != '[]' &&
       needs.wait-for-ci.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs_on }}
     environment: ${{ matrix.environment != '' && matrix.environment || null }}
     permissions:
       contents: read
+      # required for actions/cache to save nuke binaries between runs
+      actions: write
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -520,6 +449,13 @@ jobs:
       AZURE_TENANT_ID:        ${{ secrets.CI_AZURE_TENANT_ID }}
       AZURE_CLIENT_ID:        ${{ secrets.CI_AZURE_CLIENT_ID }}
       AZURE_CLIENT_SECRET:    ${{ secrets.CI_AZURE_CLIENT_SECRET }}
+      # vSphere
+      VSPHERE_USER:       ${{ secrets.CI_VSPHERE_USER }}
+      VSPHERE_PASSWORD:   ${{ secrets.CI_VSPHERE_PASSWORD }}
+      VSPHERE_SERVER:     ${{ secrets.CI_VSPHERE_SERVER }}
+      VSPHERE_THUMBPRINT: ${{ secrets.CI_VSPHERE_THUMBPRINT }}
+      VSPHERE_DATACENTER: ${{ secrets.CI_VSPHERE_DATACENTER }}
+      VSPHERE_FOLDER:     ${{ secrets.CI_VSPHERE_FOLDER }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -529,7 +465,8 @@ jobs:
           # PR merge commit contains fork code; pull_request_target trust comes from the e2e-gate environment approval, not from the checkout default
           allow-unsafe-pr-checkout: true
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - name: Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
@@ -540,7 +477,9 @@ jobs:
           path: |
             bin/cloud-nuke-*
             bin/azure-nuke-*
-          key: nuke-${{ matrix.provider }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile') }}
+            bin/govc-*
+          # scope to the PR number
+          key: nuke-${{ matrix.provider }}-${{ runner.os }}-${{ runner.arch }}-pr-${{ github.event.pull_request.number }}-${{ hashFiles('Makefile') }}
 
       - name: Nuke AWS resources
         if: ${{ matrix.provider == 'aws' }}
@@ -550,4 +489,12 @@ jobs:
         if: ${{ matrix.provider == 'azure' }}
         run: timeout 13m make dev-azure-nuke
 
-      # for GCP nuke: extend nukeable_providers and add a matching `if` step here
+      - name: Nuke vSphere resources
+        if: ${{ matrix.provider == 'vsphere' }}
+        run: timeout 13m make dev-vsphere-nuke
+
+      - name: Cleanup go build and mod cache (onprem)
+        if: ${{ matrix.class == 'onprem' && always() }}
+        run: go clean -modcache -cache
+
+      # for GCP nuke: extend cloud_nukeable in the composite action and add a matching `if` step here
