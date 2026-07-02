@@ -84,21 +84,11 @@ jobs:
             echo "GORELEASER_PREVIOUS_TAG=$previous_tag" >> "$GITHUB_ENV"
           fi
 
-      - name: Cache GoReleaser binary
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: /opt/hostedtoolcache/goreleaser
-          key: goreleaser-${{ runner.os }}-${{ runner.arch }}-v2
-          restore-keys: |
-            goreleaser-${{ runner.os }}-${{ runner.arch }}-
-
       - name: Create Release with GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REGISTRY: ghcr.io/k0rdent/kcm
-          IMAGE_NAME: controller
-          TELEMETRY_IMAGE_NAME: telemetry
           VERSION: ${{ steps.version.outputs.version }}
           SEGMENT_TOKEN: ${{ secrets.SEGMENT_TOKEN }}
         with:

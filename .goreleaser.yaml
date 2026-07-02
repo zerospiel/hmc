@@ -221,7 +221,7 @@ dockers_v2:
       - amd64
       - arm64
     images:
-      - "{{ .Env.REGISTRY }}/{{ .Env.IMAGE_NAME }}"
+      - "{{ .Env.REGISTRY }}/controller"
     tags:
       - "{{ .Env.VERSION }}"
     platforms:
@@ -243,7 +243,7 @@ dockers_v2:
       - amd64_telemetry
       - arm64_telemetry
     images:
-      - "{{ .Env.REGISTRY }}/{{ .Env.TELEMETRY_IMAGE_NAME }}"
+      - "{{ .Env.REGISTRY }}/telemetry"
     tags:
       - "{{ .Env.VERSION }}"
       - latest

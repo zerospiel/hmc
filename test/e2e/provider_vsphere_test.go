@@ -73,9 +73,9 @@ var _ = Context("vSphere Templates", Label("provider:onprem", "provider:vsphere"
 		// VSphere doesn't have any form of cleanup outside of reconciling a
 		// cluster deletion so we need to keep the test active while we wait
 		// for CAPV to clean up the resources.
-		// TODO(#473) Add an exterior cleanup mechanism for VSphere like
-		// 'dev-aws-nuke' to clean up resources in the event that the test
-		// fails to do so.
+		// If CAPV fails to do so (timeouts, controller crash, orphaned VMs),
+		// the CI Cleanup / vsphere job runs `make dev-vsphere-nuke` as a
+		// safety net to destroy any leftover VMs named after this run.
 		if cleanup() {
 			By("Deleting resources")
 			deleteFuncs := slices.Concat(hostedDeleteFuncs, standaloneDeleteFuncs, kubeconfigDeleteFuncs)
@@ -103,7 +103,8 @@ var _ = Context("vSphere Templates", Label("provider:onprem", "provider:vsphere"
 			}
 
 			// Supported architecture for Vsphere standalone deployment: amd64
-			Expect(testingConfig.Architecture).To(Equal(config.ArchitectureAmd64),
+			Expect(testingConfig.Architecture).To(
+				Equal(config.ArchitectureAmd64),
 				fmt.Sprintf("expected architecture %s", config.ArchitectureAmd64),
 			)
 
@@ -187,7 +188,8 @@ var _ = Context("vSphere Templates", Label("provider:onprem", "provider:vsphere"
 				}).WithTimeout(15 * time.Minute).WithPolling(10 * time.Second).Should(Succeed())
 
 				// Supported architecture for Vsphere hosted deployment: amd64
-				Expect(testingConfig.Hosted.Architecture).To(Equal(config.ArchitectureAmd64),
+				Expect(testingConfig.Hosted.Architecture).To(
+					Equal(config.ArchitectureAmd64),
 					fmt.Sprintf("expected architecture %s", config.ArchitectureAmd64),
 				)
 
