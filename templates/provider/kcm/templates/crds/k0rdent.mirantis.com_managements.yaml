@@ -56,6 +56,23 @@ spec:
             spec:
               description: ManagementSpec defines the desired state of Management
               properties:
+                cleanup:
+                  description: |-
+                    Cleanup configures CRD removal behaviour when the Management object is deleted.
+                    CRD deletion is issued without waiting for it to complete (fire-and-forget).
+                  properties:
+                    capiProviderCRDs:
+                      description: |-
+                        CAPIProviderCRDs indicates whether CRDs installed by the CAPI operator should be removed on
+                        Management deletion. Note: this removes all CAPI provider CRDs on the cluster,
+                        including any that were not installed by k0rdent.
+                      type: boolean
+                    k0rdentCRDs:
+                      description: |-
+                        K0rdentCRDs indicates whether k0rdent-owned CRDs should be removed when a Management is deleted.
+                        Note: this removes the Management CRD itself as part of the sweep.
+                      type: boolean
+                  type: object
                 core:
                   description: |-
                     Core holds the core components that are mandatory.

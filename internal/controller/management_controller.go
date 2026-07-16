@@ -30,12 +30,15 @@ import (
 	addoncontrollerv1beta1 "github.com/projectsveltos/addon-controller/api/v1beta1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
+	clusterapiv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,6 +50,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	kcmv1 "github.com/K0rdent/kcm/api/v1beta1"
+	"github.com/K0rdent/kcm/internal/config"
 	"github.com/K0rdent/kcm/internal/controller/components"
 	"github.com/K0rdent/kcm/internal/record"
 	kubeutil "github.com/K0rdent/kcm/internal/util/kube"
@@ -531,6 +535,27 @@ func (r *ManagementReconciler) delete(ctx context.Context, management *kcmv1.Man
 		return ctrl.Result{RequeueAfter: r.defaultRequeueTime}, nil
 	}
 
+	if cleanup := management.Spec.Cleanup; cleanup.K0rdentCRDs || cleanup.CAPIProviderCRDs {
+		if cleanup.K0rdentCRDs {
+			sel := labels.SelectorFromSet(map[string]string{kcmv1.FluxHelmChartNameKey: config.KCMHelmReleaseName()})
+			if err := r.removeCRDsWithSelector(ctx, sel); err != nil {
+				l.Error(err, "removing k0rdent CRDs")
+				return ctrl.Result{}, err
+			}
+		}
+
+		if cleanup.CAPIProviderCRDs {
+			req, err := labels.NewRequirement(clusterapiv1.ProviderNameLabel, selection.Exists, nil)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+
+			if err := r.removeCRDsWithSelector(ctx, labels.NewSelector().Add(*req)); err != nil {
+				l.Error(err, "removing CAPI provider CRDs")
+				return ctrl.Result{}, err
+			}
+		}
+	}
 	r.eventf(management, "RemovedManagement", "All KCM management components were removed")
 
 	// Removing finalizer in the end of cleanup
@@ -941,4 +966,31 @@ func (*ManagementReconciler) eventf(mgmt *kcmv1.Management, reason, message stri
 // TODO: FIXME: pass meaningful non-empty action
 func (*ManagementReconciler) warnf(mgmt *kcmv1.Management, reason, message string, args ...any) {
 	record.Warnf(mgmt, nil, reason, "Reconcile", message, args...)
+}
+
+// removeCRDsWithSelector issues deletion of all CRDs matching the given selector
+// without waiting for the deletion to complete: CRD termination is asynchronous
+// and requires no further action from this controller. In particular, the
+// Management CRD itself finishes terminating only after the Management object's
+// finalizer is removed and the object ceases to exist.
+func (r *ManagementReconciler) removeCRDsWithSelector(ctx context.Context, selector labels.Selector) error {
+	l := ctrl.LoggerFrom(ctx)
+	l.Info("Removing CRDs", "selector", selector.String())
+
+	itemsList := new(metav1.PartialObjectMetadataList)
+	itemsList.SetGroupVersionKind(apiextv1.SchemeGroupVersion.WithKind("CustomResourceDefinition"))
+	if err := r.Client.List(ctx, itemsList, &client.ListOptions{LabelSelector: selector}); err != nil {
+		return fmt.Errorf("failed to list CRDs: %w", err)
+	}
+
+	var errs error
+	for _, item := range itemsList.Items {
+		if !item.DeletionTimestamp.IsZero() {
+			continue
+		}
+		if err := r.Client.Delete(ctx, &item); client.IgnoreNotFound(err) != nil {
+			errs = errors.Join(errs, fmt.Errorf("failed to delete CRD %s: %w", item.Name, err))
+		}
+	}
+	return errs
 }

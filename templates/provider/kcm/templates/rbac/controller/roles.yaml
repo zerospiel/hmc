@@ -385,4 +385,8 @@ rules:
   - apiextensions.k8s.io
   resources:
   - customresourcedefinitions
-  verbs: {{ include "rbac.viewerVerbs" . | nindent 4 }}
+  verbs:
+  - get
+  - list
+  - watch
+  - delete
