@@ -458,8 +458,12 @@ func (r *ServiceSetReconciler) ensureProfile(ctx context.Context, rgnClient clie
 	return nil
 }
 
-func (*ServiceSetReconciler) createOrUpdateProfile(ctx context.Context, rgnClient client.Client, serviceSet *kcmv1.ServiceSet, spec *addoncontrollerv1beta1.Spec) error {
+func (r *ServiceSetReconciler) createOrUpdateProfile(ctx context.Context, rgnClient client.Client, serviceSet *kcmv1.ServiceSet, spec *addoncontrollerv1beta1.Spec) error {
 	ownerReference := metav1.NewControllerRef(serviceSet, kcmv1.GroupVersion.WithKind(kcmv1.ServiceSetKind))
+	// the same ref in mem means the Profile lives in the mgmt cluster next to
+	// the owning ServiceSet; on a regional cluster the reference would point
+	// to a nonexistent object
+	inMgmtCluster := rgnClient == r.Client
 
 	profile := new(addoncontrollerv1beta1.Profile)
 	key := client.ObjectKeyFromObject(serviceSet)
@@ -471,6 +475,7 @@ func (*ServiceSetReconciler) createOrUpdateProfile(ctx context.Context, rgnClien
 	}
 
 	annotationsUpdated := handlePauseAnnotations(&profile.ObjectMeta, serviceSet)
+	staleOwnerRefs := !inMgmtCluster && len(profile.OwnerReferences) > 0
 
 	switch {
 	// we already excluded all errors except NotFound
@@ -481,7 +486,9 @@ func (*ServiceSetReconciler) createOrUpdateProfile(ctx context.Context, rgnClien
 		profile.Labels = map[string]string{
 			kcmv1.KCMManagedLabelKey: kcmv1.KCMManagedLabelValue,
 		}
-		profile.OwnerReferences = []metav1.OwnerReference{*ownerReference}
+		if inMgmtCluster {
+			profile.OwnerReferences = []metav1.OwnerReference{*ownerReference}
+		}
 		profile.Spec = *spec
 		if err = rgnClient.Create(ctx, profile); err != nil {
 			return fmt.Errorf("failed to create Profile for ServiceSet %s: %w", serviceSet.Name, err)
@@ -489,8 +496,12 @@ func (*ServiceSetReconciler) createOrUpdateProfile(ctx context.Context, rgnClien
 	// If profile spec is not equal to the spec we just created so
 	// we need to update it. Make sure that the empty values in `spec`
 	// are defaulted otherwise comparison will always return false.
-	case annotationsUpdated || !equality.Semantic.DeepEqual(profile.Spec, *spec):
-		profile.OwnerReferences = []metav1.OwnerReference{*ownerReference}
+	case annotationsUpdated || staleOwnerRefs || !equality.Semantic.DeepEqual(profile.Spec, *spec):
+		if inMgmtCluster {
+			profile.OwnerReferences = []metav1.OwnerReference{*ownerReference}
+		} else {
+			profile.OwnerReferences = nil
+		}
 		profile.Spec = *spec
 		if err = rgnClient.Update(ctx, profile); err != nil {
 			return fmt.Errorf("failed to update Profile for ServiceSet %s: %w", serviceSet.Name, err)

@@ -28,6 +28,7 @@ import (
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/scheme"
 	clusterapiv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	. "sigs.k8s.io/controller-runtime/pkg/envtest/komega"
@@ -990,6 +991,70 @@ var _ = Describe("ServiceSet Controller integration tests", Ordered, func() {
 			By("second reconcile should succeed and collectServiceStatuses finds the ClusterSummary", func() {
 				_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&serviceSet)})
 				Expect(err).To(Succeed())
+			})
+		})
+	})
+
+	Context("Profile owner references", func() {
+		var profileSpec addoncontrollerv1beta1.Spec
+
+		BeforeEach(func() {
+			profileSpec = addoncontrollerv1beta1.Spec{
+				SyncMode: addoncontrollerv1beta1.SyncModeContinuous,
+			}
+		})
+
+		It("should set the controller owner reference on the Profile when no region is in play", func() {
+			By("creating the Profile", func() {
+				Expect(reconciler.createOrUpdateProfile(ctx, cl, &serviceSet, &profileSpec)).To(Succeed())
+				profile = addoncontrollerv1beta1.Profile{}
+				Expect(cl.Get(ctx, client.ObjectKeyFromObject(&serviceSet), &profile)).To(Succeed())
+				DeferCleanup(func() {
+					Expect(client.IgnoreNotFound(cl.Delete(ctx, &profile))).To(Succeed())
+				})
+				Expect(profile.OwnerReferences).To(HaveLen(1))
+				Expect(profile.OwnerReferences[0]).To(SatisfyAll(
+					HaveField("Kind", kcmv1.ServiceSetKind),
+					HaveField("Name", serviceSet.Name),
+					HaveField("UID", serviceSet.UID),
+					HaveField("Controller", HaveValue(BeTrue())),
+				))
+			})
+
+			By("updating the Profile", func() {
+				updatedSpec := profileSpec
+				updatedSpec.StopMatchingBehavior = addoncontrollerv1beta1.LeavePolicies
+				Expect(reconciler.createOrUpdateProfile(ctx, cl, &serviceSet, &updatedSpec)).To(Succeed())
+				Expect(cl.Get(ctx, client.ObjectKeyFromObject(&serviceSet), &profile)).To(Succeed())
+				Expect(profile.Spec.StopMatchingBehavior).To(Equal(addoncontrollerv1beta1.LeavePolicies))
+				Expect(profile.OwnerReferences).To(HaveLen(1))
+			})
+		})
+
+		It("should not set owner references on the Profile when using a regional (non-management) client", func() {
+			// Simulate a regional client by creating a separate client instance (even if it points
+			// at the same API server); owner references are gated on the client being the exact
+			// same object as the reconciler's client.
+			rgnCl, err := client.New(config, client.Options{Scheme: scheme.Scheme})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating the Profile", func() {
+				Expect(reconciler.createOrUpdateProfile(ctx, rgnCl, &serviceSet, &profileSpec)).To(Succeed())
+				profile = addoncontrollerv1beta1.Profile{}
+				Expect(cl.Get(ctx, client.ObjectKeyFromObject(&serviceSet), &profile)).To(Succeed())
+				DeferCleanup(func() {
+					Expect(client.IgnoreNotFound(cl.Delete(ctx, &profile))).To(Succeed())
+				})
+				Expect(profile.OwnerReferences).To(BeEmpty())
+			})
+
+			By("updating the Profile", func() {
+				updatedSpec := profileSpec
+				updatedSpec.StopMatchingBehavior = addoncontrollerv1beta1.LeavePolicies
+				Expect(reconciler.createOrUpdateProfile(ctx, rgnCl, &serviceSet, &updatedSpec)).To(Succeed())
+				Expect(cl.Get(ctx, client.ObjectKeyFromObject(&serviceSet), &profile)).To(Succeed())
+				Expect(profile.Spec.StopMatchingBehavior).To(Equal(addoncontrollerv1beta1.LeavePolicies))
+				Expect(profile.OwnerReferences).To(BeEmpty())
 			})
 		})
 	})
