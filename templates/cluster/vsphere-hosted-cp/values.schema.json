@@ -224,7 +224,8 @@
             "type": "string"
           }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "k0smotron": {
       "description": "K0smotron parameters",
@@ -236,6 +237,13 @@
           "uniqueItems": true,
           "items": {
             "type": "string"
+          }
+        },
+        "patches": {
+          "description": "Additional patches to apply to k0smotron generated resources (StatefulSet, Service, ConfigMap, etc.). Patches are applied after generation and before apply. Target resources are matched by Kind and app.kubernetes.io/component label. Each patch should follow the k0smotron v1beta2 patch format",
+          "type": "array",
+          "items": {
+            "type": "object"
           }
         },
         "service": {
@@ -264,7 +272,8 @@
                 "LoadBalancer"
               ]
             }
-          }
+          },
+          "additionalProperties": false
         }
       }
     },

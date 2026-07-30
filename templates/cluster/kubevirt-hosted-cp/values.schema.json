@@ -335,7 +335,8 @@
             "type": "string"
           }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "k0smotron": {
       "description": "K0smotron parameters",
@@ -492,6 +493,16 @@
             "Always",
             "IfNotPresent",
             "Never"
+          ]
+        },
+        "ioThreadsPolicy": {
+          "description": "Controls whether or not disks will share IOThreads. Omitting IOThreadsPolicy disables use of IOThreads",
+          "type": "string",
+          "enum": [
+            "shared",
+            "auto",
+            "supplementalPool",
+            ""
           ]
         },
         "memory": {

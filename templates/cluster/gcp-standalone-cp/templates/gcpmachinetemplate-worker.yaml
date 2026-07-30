@@ -8,10 +8,18 @@ spec:
     spec:
       {{- with .Values.worker }}
       instanceType: {{ .instanceType }}
+      {{- if .subnet }}
       subnet: {{ .subnet }}
+      {{- end }}
+      {{- if .providerID }}
       providerID: {{ .providerID }}
+      {{- end }}
+      {{- if .imageFamily }}
       imageFamily: {{ .imageFamily }}
+      {{- end }}
+      {{- if .image }}
       image: {{ .image }}
+      {{- end }}
       {{- if .additionalLabels }}
       additionalLabels: {{- toYaml .additionalLabels | nindent 8 }}
       {{- end }}
@@ -21,9 +29,11 @@ spec:
       {{- end }}
       rootDeviceSize: {{ .rootDeviceSize }}
       rootDeviceType: {{ .rootDeviceType }}
+      {{- with .serviceAccount }}
       serviceAccounts:
-        email: {{ .serviceAccount.email }}
-        scopes: {{- toYaml .serviceAccount.scopes | nindent 10 }}
+        email: {{ required "worker.serviceAccount.email is required" .email }}
+        scopes: {{- required "worker.serviceAccount.scopes is required" .scopes | toYaml | nindent 10 }}
+      {{- end }}
       ipForwarding: {{ .ipForwarding }}
       {{- end }}
 {{- end }}

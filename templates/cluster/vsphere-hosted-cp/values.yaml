@@ -64,14 +64,15 @@ network: ""
 # K0smotron parameters
 k0smotron: # @schema description: K0smotron parameters; type: object
   controlPlaneFlags: [] # @schema description: ControlPlaneFlags allows to configure additional flags for k0s control plane and to override existing ones. The default flags are kept unless they are overridden explicitly. Flags with arguments must be specified as a single string, e.g. --some-flag=argument; type: array; item: string; uniqueItems: true
-  service: # @schema description: The API service configuration; type: object
+  patches: [] # @schema description: Additional patches to apply to k0smotron generated resources (StatefulSet, Service, ConfigMap, etc.). Patches are applied after generation and before apply. Target resources are matched by Kind and app.kubernetes.io/component label. Each patch should follow the k0smotron v1beta2 patch format; type: array; item: object
+  service: # @schema description: The API service configuration; type: object; additionalProperties: false
     type: LoadBalancer # @schema description: An ingress methods for a service; type: string; enum: ClusterIP, NodePort, LoadBalancer; default: LoadBalancer
     apiPort: 6443 # @schema description: The kubernetes API port. If empty k0smotron will pick it automatically; type: number; minimum: 1; maximum: 65535
     konnectivityPort: 8132 # @schema description: The konnectivity port. If empty k0smotron will pick it automatically; type: number; minimum: 1; maximum: 65535
 
 # K0s parameters
-k0s: # @schema description: K0s parameters; type: object
-  version: v1.36.1+k0s.0 # @schema description: K0s version; type: string
+k0s: # @schema description: K0s parameters; type: object; additionalProperties: false
+  version: v1.36.3+k0s.0 # @schema description: K0s version; type: string
   arch: amd64 # @schema description: K0s Download URL Arch; type: string; enum: amd64, arm64, arm; default: amd64
   workerArgs: [] # @schema description: Args specifies extra arguments to be passed to k0s worker. See: https://docs.k0sproject.io/stable/worker-node-config/ See: https://docs.k0sproject.io/stable/cli/k0s_worker/; type: array; item: string; uniqueItems: true
   api: # @schema description: Kubernetes API server parameters; type: object
