@@ -250,7 +250,227 @@ func (r *ServiceSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	// Verify on-cluster state for services that sveltos reports as
+	// Deployed. The helm SDK can return success before pods are actually
+	// ready, so we cross-check by listing labeled resources on the target
+	// cluster and evaluating their state against the embedded rules.
+	// Verification is best-effort: a failure here is logged but does not
+	// fail the reconcile — keep the sveltos-reported state for that round.
+	pendingStamp, verifyErr := r.verifyServiceStates(ctx, rgnClient, serviceSet)
+	if verifyErr != nil {
+		ctrl.LoggerFrom(ctx).Error(verifyErr, "service state verification failed; keeping sveltos-reported state")
+	}
+
+	// A service ended up Deployed but we couldn't stamp its
+	// LastDeployedHash because sveltos-side inputs weren't yet
+	// available. Requeue so we can stamp on a subsequent round.
+	if pendingStamp {
+		return ctrl.Result{RequeueAfter: r.requeueInterval}, nil
+	}
+
 	return ctrl.Result{}, nil
+}
+
+// verifyServiceStates cross-checks sveltos's per-service state verdict
+// against the actual state of resources on the target cluster. For each
+// service in Status.Services whose Type is Helm, it (a) computes a stable
+// fingerprint over chart identity + values + patches from the sveltos-side
+// artifacts (ClusterSummary + ClusterConfiguration), (b) lists labeled
+// resources on the target cluster and evaluates them against the loaded
+// rules, and (c) decides the final state by combining sveltos's verdict
+// with the on-cluster verdict and the hash gate.
+//
+// Decision table (sveltos verdict, verifier verdict, hash) → final state.
+// State moves to Deployed only when BOTH signals agree; the stamp block
+// below then advances LastDeployedHash+Version only when they agree AND
+// the hash has actually moved:
+//
+//   - sveltos=*,            verifier!=Deployed            → Provisioning
+//     (downgrade —
+//     unconditional;
+//     works around
+//     helm SDK's
+//     "deployed too
+//     early" bug)
+//   - sveltos=Provisioning, verifier=Deployed, hashMatch  → Deployed
+//     (PROMOTE —
+//     sveltos-side
+//     pessimism from
+//     aggregate Helm
+//     feature status;
+//     fingerprint
+//     unchanged means
+//     healthy resource are
+//     the confirmed
+//     version)
+//   - sveltos=Provisioning, verifier=Deployed, hash!=     → Provisioning
+//     (KEEP — real
+//     apply in progress
+//     for our own
+//     service; healthy
+//     resources may be stale
+//     pre-rollout resources)
+//   - sveltos=Deployed,     verifier=Deployed             → Deployed
+//     (both agree; the
+//     stamp block below
+//     advances hash+
+//     version if the
+//     hash moved)
+//   - sveltos=Failed/etc                                  → skipped upstream
+//     (guard at s.State
+//     check — verifier
+//     never overrides
+//     terminal states)
+//
+// Rules are loaded from three tiers of ConfigMaps (cluster-global,
+// namespace-global, ServiceSet-targeted) — see rulesFromConfigMaps.
+// Per-rule compile errors are surfaced on the ServiceSet's top-level
+// condition ServiceSetHealthRules.
+// The second return, pendingStamp, is true when at least one Helm
+// service ended up in Deployed state without a stamped LastDeployedHash
+// — typically because the fingerprint inputs weren't yet available on
+// sveltos's side (ClusterConfiguration section not populated with the
+// chart entry, or ClusterSummary missing the HelmReleaseSummary). The
+// caller uses this to requeue and try stamping on a subsequent round
+// rather than leaving the service with a permanent empty hash.
+func (r *ServiceSetReconciler) verifyServiceStates(ctx context.Context, rgnClient client.Client, serviceSet *kcmv1.ServiceSet) (bool, error) {
+	if rgnClient == nil || len(serviceSet.Status.Services) == 0 {
+		return false, nil
+	}
+
+	rules, loadErrs, err := rulesFromConfigMaps(ctx, r.Client, r.SystemNamespace, serviceSet)
+	if err != nil {
+		return false, fmt.Errorf("load health rules: %w", err)
+	}
+	applyRuleLoadErrorCondition(serviceSet, loadErrs)
+
+	if len(rules) == 0 {
+		// No rules — keep sveltos-reported state.
+		return false, nil
+	}
+
+	// Fingerprint inputs from sveltos's view.
+	summary, cc, profileKind, profileName, err := fetchHelmArtifactsForVerifier(ctx, rgnClient, serviceSet)
+	if err != nil {
+		return false, fmt.Errorf("fetch sveltos artifacts: %w", err)
+	}
+	serviceHashes := serviceHashesFromArtifacts(summary, cc, profileKind, profileName)
+
+	// Index spec-side versions so the verifier can stamp Status.Version
+	// with the spec value at the moment it confirms a deploy. The Helm
+	// path makes Status.Version mean "verified on cluster" (not "what spec
+	// says") — Kustomize / Resource still mirror spec eagerly in state.go.
+	specVersions := make(map[client.ObjectKey]*string, len(serviceSet.Spec.Services))
+	for i := range serviceSet.Spec.Services {
+		svc := &serviceSet.Spec.Services[i]
+		specVersions[client.ObjectKey{Namespace: svc.Namespace, Name: svc.Name}] = svc.Version
+	}
+
+	childClient, err := getChildClient(ctx, r.Client, rgnClient, serviceSet)
+	if err != nil {
+		return false, fmt.Errorf("get child cluster client: %w", err)
+	}
+
+	l := ctrl.LoggerFrom(ctx)
+	var errs error
+	stateChanged := false
+	pendingStamp := false
+
+	for i := range serviceSet.Status.Services {
+		s := &serviceSet.Status.Services[i]
+		// Kustomize/Resource paths are not yet supported by the verifier:
+		// sveltos does not stamp per-service identity on those.
+		if s.Type != kcmv1.ServiceTypeHelm {
+			continue
+		}
+		// Never override Failed / NotDeployed / Deleting / Deleted.
+		if s.State != kcmv1.ServiceStateDeployed && s.State != kcmv1.ServiceStateProvisioning {
+			continue
+		}
+
+		serviceKey := client.ObjectKey{Namespace: s.Namespace, Name: s.Name}
+		currentHash := serviceHashes[serviceKey]
+
+		// Combine sveltos's verdict with the verifier's on-cluster verdict:
+		//
+		//   1. Verifier says NOT healthy (unhealthy resources, or none found
+		//      under the release labels) → downgrade to Provisioning and
+		//      attach conditions. Unconditional — this is the whole point of
+		//      the verifier, catching sveltos's premature "Deployed" from
+		//      helm SDK's known "success too early" bug.
+		//   2. Verifier says healthy AND sveltos says Provisioning AND the
+		//      current fingerprint matches the last confirmed-Deployed one
+		//      → promote to Deployed. Sveltos is only Provisioning because
+		//      featureHelm's aggregate status was demoted by unrelated
+		//      activity in the same ClusterProfile; our hash hasn't moved,
+		//      so the pods the verifier sees ARE the confirmed version.
+		//   3. Otherwise → keep sveltos's verdict. Critically, when the
+		//      verifier says healthy but our hash HAS advanced, we do NOT
+		//      promote from sveltos-Provisioning: the healthy pods may be
+		//      stale previous-version pods still running before a rollout
+		//      starts. We wait until sveltos itself confirms Deployed.
+		verifierState, conds, err := verifyHelmServiceOnCluster(ctx, childClient, rules, s.Name, s.Namespace)
+		if err != nil {
+			errs = errors.Join(errs, fmt.Errorf("verify service %s/%s: %w", s.Namespace, s.Name, err))
+			continue
+		}
+
+		newState := s.State
+		var newConds []metav1.Condition
+		switch {
+		case verifierState != kcmv1.ServiceStateDeployed:
+			newState = kcmv1.ServiceStateProvisioning
+			newConds = conds
+		case s.State == kcmv1.ServiceStateProvisioning &&
+			currentHash != "" && currentHash == s.LastDeployedHash:
+			newState = kcmv1.ServiceStateDeployed
+		}
+
+		if newState == kcmv1.ServiceStateDeployed && currentHash == "" {
+			newState = kcmv1.ServiceStateProvisioning
+			pendingStamp = true
+		}
+
+		if newState != s.State {
+			l.V(1).Info("verifier transitioning service state",
+				"service", serviceKey,
+				"from", s.State, "to", newState,
+				"currentHash", currentHash, "lastDeployedHash", s.LastDeployedHash)
+			s.State = newState
+			now := metav1.NewTime(r.timeFunc())
+			s.LastStateTransitionTime = &now
+			stateChanged = true
+		}
+		applyVerifyConditions(s, newConds)
+
+		// Stamp Status.Version and Status.LastDeployedHash on a hash
+		// transition while Deployed. Under the switch above, `newState ==
+		// Deployed` with `currentHash != LastDeployedHash` is only
+		// reachable via the "sveltos=Deployed AND verifier=Deployed" path
+		// — the promotion arm requires `currentHash == LastDeployedHash`,
+		// which makes the hash-!= guard here false. So this stamp fires
+		// only when BOTH sveltos and the verifier confirm Deployed AND
+		// the fingerprint has actually advanced: the strongest agreement
+		// we can express with the signals sveltos exposes.
+		if newState == kcmv1.ServiceStateDeployed && currentHash != "" && currentHash != s.LastDeployedHash {
+			s.LastDeployedHash = currentHash
+			s.Version = specVersions[serviceKey]
+		}
+	}
+
+	if stateChanged {
+		serviceSet.Status.Deployed = !slices.ContainsFunc(serviceSet.Status.Services, func(s kcmv1.ServiceState) bool {
+			return s.State != kcmv1.ServiceStateDeployed
+		})
+	}
+	// updateServicesInReadyStateCondition ran earlier (from
+	// collectServiceStatuses) over sveltos-reported states. After the
+	// verifier mutates per-service states, that aggregate is stale —
+	// recompute so the ServicesInReadyState condition agrees with
+	// .status.services[*].state. Runs unconditionally: even when this round
+	// transitioned nothing, the previous round may have left a stale count.
+	r.updateServicesInReadyStateCondition(serviceSet)
+	return pendingStamp, errs
 }
 
 func (r *ServiceSetReconciler) reconcileDelete(ctx context.Context, rgnClient client.Client, serviceSet *kcmv1.ServiceSet) (ctrl.Result, error) {
@@ -878,8 +1098,10 @@ func getHelmCharts(ctx context.Context, c client.Client, serviceSet *kcmv1.Servi
 				Name:                    svc.Name,
 				Namespace:               svc.Namespace,
 				Template:                svc.Template,
-				Version:                 svc.Version,
-				State:                   kcmv1.ServiceStateProvisioning,
+				// Version is intentionally NOT seeded for Helm services —
+				// the verifier owns Status.Version for this type and stamps
+				// it only after confirming the spec version is on cluster.
+				State: kcmv1.ServiceStateProvisioning,
 			}
 			serviceSet.Status.Services = append(serviceSet.Status.Services, serviceStatus)
 		}
@@ -1561,7 +1783,8 @@ func conditionReasonChanged(conditionOldState, conditionNewState *metav1.Conditi
 
 // getRegionalClient returns the kubernetes client for the cluster where
 // serviceSet's workload runs: the local client cl for self-managed (empty
-// .spec.cluster) ServiceSets, or the regional client otherwise.
+// .spec.cluster) ServiceSets, or the child (in relation to mothership)
+// client otherwise.
 func getRegionalClient(ctx context.Context, cl client.Client, serviceSet *kcmv1.ServiceSet, systemNamespace string) (client.Client, error) {
 	return resolveRegionalClient(ctx, cl, serviceSet, systemNamespace, nil)
 }
@@ -1617,6 +1840,52 @@ func resolveRegionalClient(
 	return rgn, nil
 }
 
+// getChildClient returns the kubernetes client for the cluster where
+// serviceSet's workload runs: the local client cl for self-managed (empty
+// .spec.cluster) ServiceSets, the regional (child in relation to mothership)
+// client or the child (in relation to regional cluster).
+func getChildClient(ctx context.Context, cl, rgnClient client.Client, serviceSet *kcmv1.ServiceSet) (client.Client, error) {
+	return resolveChildClient(ctx, cl, rgnClient, serviceSet)
+}
+
+// resolveChildClient returns the kubernetes client for the cluster where
+// serviceSet's workloads actually run. Three schemes are handled:
+//
+//   - self-management: no CAPI child exists; return mgmt (cl).
+//   - flat (mgmt hosts CAPI) or regional (Region cluster hosts CAPI):
+//     build the client using GetChildClient function.
+func resolveChildClient(
+	ctx context.Context,
+	cl client.Client,
+	rgnClient client.Client,
+	serviceSet *kcmv1.ServiceSet,
+) (client.Client, error) {
+	if serviceSet.Spec.Provider.SelfManagement {
+		return cl, nil
+	}
+
+	clusterKey := client.ObjectKey{Namespace: serviceSet.Namespace, Name: serviceSet.Spec.Cluster}
+	secretRef := kubeutil.GetKubeconfigSecretKey(clusterKey)
+	childCl, err := kubeutil.GetChildClient(ctx, rgnClient, secretRef, "value", rgnClient.Scheme(), kubeutil.DefaultClientFactory)
+	if err == nil {
+		return childCl, nil
+	}
+	// NotFound error could be returned in the only case - when the Secret containing
+	// the kubeconfig is not found. This might happen if the cluster is an adopted cluster
+	// and backed by the SveltosCluster object. In this case we'll need to lookup for the
+	// corresponding SveltosCluster and get the secret key from it.
+	// Hence we'll return error in case the error is not the NotFound error.
+	if !apierrors.IsNotFound(err) {
+		return nil, err
+	}
+	// Otherwise we'll fallback to sveltos cluster identity.
+	sveltosSecretRef, key, err := resolveSveltosClusterIdentityRef(ctx, rgnClient, serviceSet)
+	if err != nil {
+		return nil, err
+	}
+	return kubeutil.GetChildClient(ctx, rgnClient, sveltosSecretRef, key, rgnClient.Scheme(), kubeutil.DefaultClientFactory)
+}
+
 func clusterReference(serviceSet *kcmv1.ServiceSet) *corev1.ObjectReference {
 	if serviceSet.Spec.Provider.SelfManagement {
 		return &corev1.ObjectReference{
@@ -1632,4 +1901,44 @@ func clusterReference(serviceSet *kcmv1.ServiceSet) *corev1.ObjectReference {
 		Namespace:  serviceSet.Namespace,
 		APIVersion: kcmv1.GroupVersion.WithKind(kcmv1.ClusterDeploymentKind).GroupVersion().String(),
 	}
+}
+
+func resolveSveltosClusterIdentityRef(ctx context.Context, cl client.Client, serviceSet *kcmv1.ServiceSet) (client.ObjectKey, string, error) {
+	var (
+		secretRef client.ObjectKey
+		secretKey string
+	)
+	sveltosClusterKey := client.ObjectKey{Namespace: serviceSet.Namespace, Name: serviceSet.Spec.Cluster}
+	sveltosCluster := new(libsveltosv1beta1.SveltosCluster)
+	if err := cl.Get(ctx, sveltosClusterKey, sveltosCluster); err != nil {
+		return secretRef, "", fmt.Errorf("failed to get Sveltos cluster %s: %w", sveltosClusterKey, err)
+	}
+
+	secretRef = client.ObjectKey{Namespace: serviceSet.Namespace, Name: sveltosCluster.Name + "-sveltos-kubeconfig"}
+	if sveltosCluster.Spec.KubeconfigName != "" {
+		secretRef = client.ObjectKey{Namespace: serviceSet.Namespace, Name: sveltosCluster.Spec.KubeconfigName}
+	}
+	secretKey = sveltosCluster.Spec.KubeconfigKeyName
+	// if the key containing kubeconfig is defined, we're good to return
+	// otherwise we'll try to discover the key.
+	if secretKey != "" {
+		return secretRef, secretKey, nil
+	}
+	secret := new(corev1.Secret)
+	if err := cl.Get(ctx, secretRef, secret); err != nil {
+		return secretRef, "", fmt.Errorf("failed to get secret %s: %w", secretRef, err)
+	}
+	// since iteration over map keys is non-deterministic in Go, we can't rely on
+	// Sveltos implementation to "get the first key in the Secret" (sveltoscluster_type.go, L229-232)
+	// instead, we'll reject secrets where there are more than 1 key defined.
+	if len(secret.Data) == 0 {
+		return secretRef, secretKey, fmt.Errorf("secret %s has no data", secretRef)
+	}
+	if len(secret.Data) > 1 {
+		return secretRef, secretKey, fmt.Errorf("secret %s has more than one key", secretRef)
+	}
+	for k := range secret.Data {
+		secretKey = k
+	}
+	return secretRef, secretKey, nil
 }
