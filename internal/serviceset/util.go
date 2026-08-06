@@ -26,6 +26,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 	addoncontrollerv1beta1 "github.com/projectsveltos/addon-controller/api/v1beta1"
 	libsveltosv1beta1 "github.com/projectsveltos/libsveltos/api/v1beta1"
+	corev1 "k8s.io/api/core/v1"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -37,6 +38,17 @@ import (
 	kcmv1 "github.com/K0rdent/kcm/api/v1beta1"
 	kubeutil "github.com/K0rdent/kcm/internal/util/kube"
 )
+
+// SelfManagementClusterReference returns the ObjectReference identifying the
+// management cluster pseudo-target used for self-managed ServiceSets.
+func SelfManagementClusterReference() *corev1.ObjectReference {
+	return &corev1.ObjectReference{
+		Kind:       libsveltosv1beta1.SveltosClusterKind,
+		Name:       "mgmt",
+		Namespace:  "mgmt",
+		APIVersion: libsveltosv1beta1.GroupVersion.WithKind(libsveltosv1beta1.SveltosClusterKind).GroupVersion().String(),
+	}
+}
 
 // ObjectKey generates a unique key for a ServiceSet given the input and returns it.
 func ObjectKey(systemNamespace string, cd *kcmv1.ClusterDeployment, mcs *kcmv1.MultiClusterService) client.ObjectKey {
@@ -59,6 +71,26 @@ func ObjectKey(systemNamespace string, cd *kcmv1.ClusterDeployment, mcs *kcmv1.M
 	return client.ObjectKey{
 		Namespace: serviceSetNamespace,
 		Name:      serviceSetName,
+	}
+}
+
+// ClusterReference returns the reference identifying the cluster a ServiceSet targets, including
+// Kind/APIVersion - not just namespace/name - so that the self-management pseudo-target (always a
+// SveltosCluster named mgmt/mgmt) can never be mistaken for a real, unrelated ClusterDeployment
+// that happens to also be named mgmt in namespace mgmt. An empty .spec.cluster identifies the
+// self-management (mgmt) pseudo-cluster rather than a real ClusterDeployment.
+func ClusterReference(serviceSet *kcmv1.ServiceSet) *corev1.ObjectReference {
+	if serviceSet == nil {
+		return &corev1.ObjectReference{}
+	}
+	if serviceSet.Spec.Cluster == "" {
+		return SelfManagementClusterReference()
+	}
+	return &corev1.ObjectReference{
+		Kind:       kcmv1.ClusterDeploymentKind,
+		Name:       serviceSet.Spec.Cluster,
+		Namespace:  serviceSet.Namespace,
+		APIVersion: kcmv1.GroupVersion.WithKind(kcmv1.ClusterDeploymentKind).GroupVersion().String(),
 	}
 }
 
