@@ -80,6 +80,12 @@ type profileConfig struct {
 	// KSM specific configuration
 	// Priority is the priority of the Profile.
 	Priority *int32 `json:"priority,omitempty"`
+
+	// MaxConsecutiveFailures defines how many install/upgrade attempts
+	// sveltos will take before giving up. After this many consecutive failures,
+	// the deployment will be considered failed, and Sveltos will stop retrying.
+	MaxConsecutiveFailures *uint `json:"maxConsecutiveFailures,omitempty"`
+
 	// DriftIgnore is a list of [github.com/projectsveltos/libsveltos/api/v1beta1.PatchSelector] to ignore
 	// when checking for drift.
 	DriftIgnore []libsveltosv1beta1.PatchSelector `json:"driftIgnore,omitempty"`
@@ -1463,7 +1469,12 @@ func convertValuesFrom(src []kcmv1.ValuesFrom, namespace string) []addoncontroll
 
 func convertHelmOptions(options *kcmv1.ServiceHelmOptions) *addoncontrollerv1beta1.HelmOptions {
 	if options == nil {
-		return nil
+		// we'll set atomic to true in case no helm options were
+		// defined to protect the deployment from unintended deletion
+		// in case of failed upgrade on the sveltos side.
+		return new(addoncontrollerv1beta1.HelmOptions{
+			Atomic: true,
+		})
 	}
 	toReturn := addoncontrollerv1beta1.HelmOptions{
 		Timeout: options.Timeout,
@@ -1503,6 +1514,11 @@ func convertHelmOptions(options *kcmv1.ServiceHelmOptions) *addoncontrollerv1bet
 
 	if options.Atomic != nil {
 		toReturn.Atomic = *options.Atomic
+	} else {
+		// we'll set atomic to true in case it's not defined
+		// to protect the deployment from unintended deletion
+		// in case of failed upgrade on the sveltos side.
+		toReturn.Atomic = true
 	}
 
 	if options.DependencyUpdate != nil {
@@ -1575,6 +1591,7 @@ func buildProfileSpec(config *apiextv1.JSON) (*addoncontrollerv1beta1.Spec, erro
 	spec.PolicyRefs = params.PolicyRefs
 	spec.Patches = params.Patches
 	spec.DriftExclusions = params.DriftExclusions
+	spec.MaxConsecutiveFailures = params.MaxConsecutiveFailures
 
 	for _, target := range params.DriftIgnore {
 		spec.Patches = append(spec.Patches, libsveltosv1beta1.Patch{
