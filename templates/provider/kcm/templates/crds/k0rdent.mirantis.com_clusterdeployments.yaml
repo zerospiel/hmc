@@ -511,7 +511,7 @@ spec:
                             description: Disable can be set to disable handling of this service.
                             type: boolean
                           helmAction:
-                            description: HelmChartAction specifies action on an helm chart
+                            description: HelmAction specifies the action to take on a Helm chart
                             enum:
                               - Install
                               - Uninstall

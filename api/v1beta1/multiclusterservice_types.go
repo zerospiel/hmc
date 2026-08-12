@@ -100,7 +100,7 @@ type Service struct {
 
 	// +kubebuilder:validation:Enum:=Install;Uninstall
 
-	// HelmChartAction specifies action on an helm chart
+	// HelmAction specifies the action to take on a Helm chart
 	HelmAction *string `json:"helmAction,omitempty"`
 
 	// +kubebuilder:validation:MinLength=1
