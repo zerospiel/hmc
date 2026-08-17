@@ -56,15 +56,33 @@ func GetKubeconfigSecretKey(clusterKey client.ObjectKey) client.ObjectKey {
 	return client.ObjectKey{Name: clusterKey.Name + "-kubeconfig", Namespace: clusterKey.Namespace}
 }
 
+// newClientOptions assembles the rest config and client options for the given
+// kubeconfig bytes, wiring in the shared RESTMapper and the HTTP client it
+// discovers through, so every client for a cluster identity reuses one
+// discovery cache and one transport instead of rebuilding both.
+func newClientOptions(kubeconfig []byte, scheme *runtime.Scheme) (*rest.Config, client.Options, error) {
+	restCfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
+	if err != nil {
+		return nil, client.Options{}, fmt.Errorf("failed to build rest config from the given kubeconfig data: %w", err)
+	}
+
+	mapper, httpClient, err := sharedRESTMapperCache.get(restCfg, kubeconfig)
+	if err != nil {
+		return nil, client.Options{}, fmt.Errorf("failed to get shared REST mapper: %w", err)
+	}
+
+	return restCfg, client.Options{Scheme: scheme, Mapper: mapper, HTTPClient: httpClient}, nil
+}
+
 // DefaultClientFactory constructs a [sigs.k8s.io/controller-runtime/pkg/client.Client] from the
 // given kubeconfig bytes and scheme.
 func DefaultClientFactory(kubeconfig []byte, scheme *runtime.Scheme) (client.Client, error) {
-	restCfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
+	restCfg, opts, err := newClientOptions(kubeconfig, scheme)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build rest config from the given kubeconfig data: %w", err)
+		return nil, err
 	}
 
-	cl, err := client.New(restCfg, client.Options{Scheme: scheme})
+	cl, err := client.New(restCfg, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
@@ -81,14 +99,14 @@ func DefaultClientFactory(kubeconfig []byte, scheme *runtime.Scheme) (client.Cli
 func DefaultClientFactoryWithRestConfig() (func([]byte, *runtime.Scheme) (client.Client, error), *rest.Config) {
 	restCfg := new(rest.Config)
 	return func(kubeconfig []byte, scheme *runtime.Scheme) (client.Client, error) {
-		cfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
+		cfg, opts, err := newClientOptions(kubeconfig, scheme)
 		if err != nil {
-			return nil, fmt.Errorf("failed to build rest config from the given kubeconfig data: %w", err)
+			return nil, err
 		}
 
 		*restCfg = *cfg
 
-		cl, err := client.New(cfg, client.Options{Scheme: scheme})
+		cl, err := client.New(cfg, opts)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create client: %w", err)
 		}
