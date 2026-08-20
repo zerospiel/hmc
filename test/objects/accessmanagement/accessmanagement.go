@@ -51,6 +51,20 @@ func WithAccessRules(accessRules []kcmv1.AccessRule) Opt {
 	}
 }
 
+// NewResourceRule builds a [kcmv1.ResourceRule] selecting the given object names.
+//
+// APIGroup is left empty so [kcmv1.ResourceRule.GroupKind] defaults it to the built-in
+// k0rdent.mirantis.com group for a built-in Kind; for custom kinds, set APIGroup explicitly.
+func NewResourceRule(kind string, names ...string) kcmv1.ResourceRule {
+	if len(names) == 0 {
+		panic("expected at least one name")
+	}
+	return kcmv1.ResourceRule{
+		Kind:  kind,
+		Names: names,
+	}
+}
+
 func WithLabels(kv ...string) Opt {
 	return func(am *kcmv1.AccessManagement) {
 		if am.Labels == nil {
