@@ -17,9 +17,11 @@ package kube
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,14 +54,14 @@ import (
 // entry's single alias rather than accumulating every representation seen, so
 // len(aliases) == len(entries) always and the index cannot outgrow the cache.
 type restMapperCache struct {
-	entries map[string]*restMapperEntry
+	entries map[restMapperKey]*restMapperEntry
 	// aliases maps an entry's current raw kubeconfig fingerprint to its
 	// entries key.
-	aliases map[string]string
+	aliases map[[sha256.Size]byte]restMapperKey
 	nowFunc func() time.Time
 	// canonicalize is canonicalKubeconfigFingerprint, injectable so tests can
 	// count how often lookups leave the fast path.
-	canonicalize func([]byte) (string, error)
+	canonicalize func([]byte) ([sha256.Size]byte, error)
 
 	ttl             time.Duration
 	refreshInterval time.Duration
@@ -73,10 +75,17 @@ func newRESTMapperCache(ttl, refreshInterval, sweepInterval time.Duration, maxEn
 	return newRESTMapperCacheWithClock(ttl, refreshInterval, sweepInterval, maxEntries, time.Now)
 }
 
+// restMapperKey identifies one cluster identity: the normalized apiserver
+// host plus the canonical fingerprint of the kubeconfig addressing it.
+type restMapperKey struct {
+	host        string
+	fingerprint [sha256.Size]byte
+}
+
 func newRESTMapperCacheWithClock(ttl, refreshInterval, sweepInterval time.Duration, maxEntries int, nowFunc func() time.Time) *restMapperCache {
 	return &restMapperCache{
-		entries:         make(map[string]*restMapperEntry),
-		aliases:         make(map[string]string),
+		entries:         make(map[restMapperKey]*restMapperEntry),
+		aliases:         make(map[[sha256.Size]byte]restMapperKey),
 		nowFunc:         nowFunc,
 		canonicalize:    canonicalKubeconfigFingerprint,
 		ttl:             ttl,
@@ -99,7 +108,7 @@ type restMapperEntry struct {
 	// rawFingerprint is the entry's current byte representation — the one the
 	// aliases index resolves. Mutated only under the cache's lock, when a
 	// promotion swaps it for a newer representation.
-	rawFingerprint string
+	rawFingerprint [sha256.Size]byte
 	// lastUsed is read and written only while the cache's mu is held, like
 	// every other mutable field here, so it needs no atomicity of its own.
 	lastUsed int64
@@ -130,13 +139,45 @@ const (
 	// a fleet that only shrinks.
 	restMapperSweepInterval = 10 * time.Minute
 
-	// restMapperMaxEntries caps the cache. High identity churn within one TTL
-	// window must not grow the map without bound, and the cap also bounds
-	// retention in a binary that does not register the sweeper.
+	// restMapperMaxEntries caps the cache unless [restMapperCacheMaxEntriesEnvName]
+	// overrides it. High identity churn within one TTL window must not grow the
+	// map without bound, and the cap also bounds retention in a binary that
+	// does not register the sweeper.
 	restMapperMaxEntries = 256
+
+	// restMapperMaxConfigurableEntries is the largest cap an override may set,
+	// and must match the maximum of restMapperCacheMaxEntries in the chart
+	// values schemas so both configuration paths agree. A larger value is
+	// clamped rather than rejected: an operator asking for an oversized cache
+	// wants it big, and falling back to the small default could reintroduce
+	// the eviction churn the override exists to prevent.
+	restMapperMaxConfigurableEntries = 1_000_000
 )
 
-var sharedRESTMapperCache = newRESTMapperCache(restMapperTTL, restMapperRefreshInterval, restMapperSweepInterval, restMapperMaxEntries)
+// restMapperCacheMaxEntriesEnvName is the name of the env variable overriding
+// the shared RESTMapper cache's maximum entry count.
+const restMapperCacheMaxEntriesEnvName = "RESTMAPPER_CACHE_MAX_ENTRIES"
+
+var sharedRESTMapperCache = newRESTMapperCache(restMapperTTL, restMapperRefreshInterval, restMapperSweepInterval, restMapperCacheMaxEntriesFromEnv())
+
+// restMapperCacheMaxEntriesFromEnv resolves the shared cache's entry cap: the value of
+// [restMapperCacheMaxEntriesEnvName] when it holds a positive integer,
+// restMapperMaxEntries otherwise.
+func restMapperCacheMaxEntriesFromEnv() int {
+	raw, ok := os.LookupEnv(restMapperCacheMaxEntriesEnvName)
+	if !ok {
+		return restMapperMaxEntries
+	}
+	// On range overflow Atoi reports ErrRange but still returns the value
+	// saturated to MaxInt or MinInt, so letting that error through makes an
+	// oversized ask clamp below and a negative one fall back, the same as
+	// their in-range counterparts.
+	n, err := strconv.Atoi(raw)
+	if (err != nil && !errors.Is(err, strconv.ErrRange)) || n <= 0 {
+		return restMapperMaxEntries
+	}
+	return min(n, restMapperMaxConfigurableEntries)
+}
 
 func normalizeHost(host string) string { return strings.TrimRight(host, "/") }
 
@@ -165,7 +206,7 @@ func (c *restMapperCache) get(cfg *rest.Config, kubeconfig []byte) (meta.RESTMap
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to fingerprint kubeconfig for %s: %w", host, err)
 	}
-	key := host + "\x00" + canonicalFingerprint
+	key := restMapperKey{host: host, fingerprint: canonicalFingerprint}
 
 	c.mu.Lock()
 	if mapper, httpClient, ok := c.lookupLocked(key, rawFingerprint, now); ok {
@@ -222,7 +263,7 @@ func (c *restMapperCache) get(cfg *rest.Config, kubeconfig []byte) (meta.RESTMap
 // be called under the lock.
 func (c *restMapperCache) evictOldestLocked() {
 	var (
-		oldestKey string
+		oldestKey restMapperKey
 		oldest    int64
 		found     bool
 	)
@@ -243,7 +284,7 @@ func (c *restMapperCache) evictOldestLocked() {
 // canonical-hit path and the post-build re-check converge through it, so a
 // caller that lost a build race receives the winning entry's mapper and
 // transport together. Must be called under the lock.
-func (c *restMapperCache) lookupLocked(key, rawFingerprint string, now time.Time) (meta.RESTMapper, *http.Client, bool) {
+func (c *restMapperCache) lookupLocked(key restMapperKey, rawFingerprint [sha256.Size]byte, now time.Time) (meta.RESTMapper, *http.Client, bool) {
 	entry, ok := c.entries[key]
 	if !ok || entry.aged(now, c.refreshInterval) {
 		return nil, nil, false
@@ -259,7 +300,7 @@ func (c *restMapperCache) lookupLocked(key, rawFingerprint string, now time.Time
 // previous representation's alias is dropped rather than kept: retaining every
 // representation ever seen would grow the index without bound on repeated
 // Secret rewrites. Must be called under the lock.
-func (c *restMapperCache) promote(entry *restMapperEntry, key, rawFingerprint string) {
+func (c *restMapperCache) promote(entry *restMapperEntry, key restMapperKey, rawFingerprint [sha256.Size]byte) {
 	if entry.rawFingerprint == rawFingerprint {
 		return
 	}
@@ -268,22 +309,23 @@ func (c *restMapperCache) promote(entry *restMapperEntry, key, rawFingerprint st
 	c.aliases[rawFingerprint] = key
 }
 
-func fingerprint(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+// fingerprint digests raw bytes into a comparable array, so it can serve as a
+// map key directly without a hex allocation on every lookup.
+func fingerprint(data []byte) [sha256.Size]byte {
+	return sha256.Sum256(data)
 }
 
-func canonicalKubeconfigFingerprint(kubeconfig []byte) (string, error) {
+func canonicalKubeconfigFingerprint(kubeconfig []byte) ([sha256.Size]byte, error) {
 	config, err := clientcmd.Load(kubeconfig)
 	if err != nil {
-		return "", err
+		return [sha256.Size]byte{}, err
 	}
 	for _, cluster := range config.Clusters {
 		cluster.Server = normalizeHost(cluster.Server)
 	}
 	canonical, err := clientcmd.Write(*config)
 	if err != nil {
-		return "", err
+		return [sha256.Size]byte{}, err
 	}
 	return fingerprint(canonical), nil
 }
