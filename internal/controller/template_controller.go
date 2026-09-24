@@ -99,11 +99,10 @@ func (r *ClusterTemplateReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, nil
 	}
 
-	if updated, err := labelsutil.AddKCMComponentLabel(ctx, r.Client, clusterTemplate); updated || err != nil {
-		if err != nil {
-			l.Error(err, "adding component label")
-		}
-		return ctrl.Result{Requeue: true}, err // generation has not changed, need explicit requeue
+	// the patch refreshes the object in place, so reconciliation can proceed within the same run
+	if _, err := labelsutil.AddKCMComponentLabel(ctx, r.Client, clusterTemplate); err != nil {
+		l.Error(err, "adding component label")
+		return ctrl.Result{}, err
 	}
 
 	return r.ReconcileTemplate(ctx, clusterTemplate)
@@ -136,11 +135,10 @@ func (r *ProviderTemplateReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, nil
 	}
 
-	if updated, err := labelsutil.AddKCMComponentLabel(ctx, r.Client, providerTemplate); updated || err != nil {
-		if err != nil {
-			l.Error(err, "adding component label")
-		}
-		return ctrl.Result{Requeue: true}, err // generation has not changed, need explicit requeue
+	// the patch and the update refresh the object in place, so reconciliation can proceed within the same run
+	if _, err := labelsutil.AddKCMComponentLabel(ctx, r.Client, providerTemplate); err != nil {
+		l.Error(err, "adding component label")
+		return ctrl.Result{}, err
 	}
 
 	changed, err := r.setReleaseOwnership(ctx, providerTemplate)
@@ -150,20 +148,25 @@ func (r *ProviderTemplateReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 	if changed {
 		l.Info("Updating OwnerReferences with associated Releases")
-		return ctrl.Result{Requeue: true}, r.Update(ctx, providerTemplate) // generation will NOT change, need explicit requeue
+		if err := r.Update(ctx, providerTemplate); err != nil {
+			l.Error(err, "Failed to update OwnerReferences")
+			return ctrl.Result{}, err
+		}
 	}
 
 	return r.ReconcileTemplate(ctx, providerTemplate)
 }
 
-func (r *ProviderTemplateReconciler) setReleaseOwnership(ctx context.Context, providerTemplate *kcmv1.ProviderTemplate) (changed bool, err error) {
+func (r *ProviderTemplateReconciler) setReleaseOwnership(ctx context.Context, providerTemplate *kcmv1.ProviderTemplate) (changed bool, _ error) {
 	releases := &kcmv1.ReleaseList{}
-	err = r.List(ctx, releases,
+
+	if err := r.List(
+		ctx, releases,
 		client.MatchingFields{kcmv1.ReleaseTemplatesIndexKey: providerTemplate.Name},
-	)
-	if err != nil {
+	); err != nil {
 		return changed, fmt.Errorf("failed to get associated releases: %w", err)
 	}
+
 	for _, release := range releases.Items {
 		if kubeutil.AddOwnerReference(providerTemplate, &release) {
 			changed = true
@@ -337,11 +340,9 @@ func (r *TemplateReconciler) ensureSchemaConfigmap(ctx context.Context, template
 		ns = r.SystemNamespace
 	}
 	schemaConfigMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            generateSchemaConfigMapName(template),
-			Namespace:       ns,
-			OwnerReferences: []metav1.OwnerReference{*ownerRef},
-		},
+		Name:            generateSchemaConfigMapName(template),
+		Namespace:       ns,
+		OwnerReferences: []metav1.OwnerReference{*ownerRef},
 	}
 
 	_, err := ctrl.CreateOrUpdate(ctx, r.Client, schemaConfigMap, func() error {
@@ -432,10 +433,8 @@ func (r *TemplateReconciler) reconcileHelmChart(ctx context.Context, template te
 		namespace = r.SystemNamespace
 	}
 	helmChart := &sourcev1.HelmChart{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      template.GetName(),
-			Namespace: namespace,
-		},
+		Name:      template.GetName(),
+		Namespace: namespace,
 	}
 
 	helmSpec := template.GetHelmSpec()
@@ -559,7 +558,8 @@ func (r *ProviderTemplateReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			RateLimiter: ratelimitutil.DefaultFastSlow(),
 		}).
 		For(&kcmv1.ProviderTemplate{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
-		Watches(&kcmv1.Release{},
+		Watches(
+			&kcmv1.Release{},
 			handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []ctrl.Request {
 				release, ok := o.(*kcmv1.Release)
 				if !ok {
@@ -570,7 +570,7 @@ func (r *ProviderTemplateReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				requests := make([]ctrl.Request, 0, len(templates))
 				for _, template := range templates {
 					requests = append(requests, ctrl.Request{
-						NamespacedName: client.ObjectKey{Name: template},
+						Name: template,
 					})
 				}
 

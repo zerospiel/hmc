@@ -653,10 +653,6 @@ func (r *ClusterDeploymentReconciler) reconcileHelmRelease(
 
 	requeue, err := r.aggregateCapiConditions(ctx, scope)
 	if err != nil {
-		if requeue {
-			return ctrl.Result{RequeueAfter: r.defaultRequeueTime}, err
-		}
-
 		return ctrl.Result{}, err
 	}
 
@@ -887,15 +883,13 @@ func (r *ClusterDeploymentReconciler) ensureDataSourceReferences(ctx context.Con
 	randStr := utilrand.String(randomSuffixLen)
 
 	clusterdatasource = &kcmv1.ClusterDataSource{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      cd.Name,
-			Namespace: cd.Namespace,
-			Labels: map[string]string{
-				kcmv1.KCMManagedLabelKey:        kcmv1.KCMManagedLabelValue,          // managed by us
-				kcmv1.GenericComponentNameLabel: kcmv1.GenericComponentLabelValueKCM, // to be included in a backup
-			},
-			Finalizers: []string{kcmv1.ClusterDataSourceFinalizer},
+		Name:      cd.Name,
+		Namespace: cd.Namespace,
+		Labels: map[string]string{
+			kcmv1.KCMManagedLabelKey:        kcmv1.KCMManagedLabelValue,          // managed by us
+			kcmv1.GenericComponentNameLabel: kcmv1.GenericComponentLabelValueKCM, // to be included in a backup
 		},
+		Finalizers: []string{kcmv1.ClusterDataSourceFinalizer},
 		Spec: kcmv1.ClusterDataSourceSpec{
 			Schema:     strings.ReplaceAll(fmt.Sprintf("%s_%s_%s", cd.Namespace, cd.Name, randStr), "-", "_"),
 			DataSource: cd.Spec.DataSource,
@@ -949,10 +943,8 @@ func (r *ClusterDeploymentReconciler) ensureClusterDataSourceRegionalSecrets(ctx
 
 		secretKey := client.ObjectKey{Name: secretName, Namespace: cd.Namespace}
 		regionalSecret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      secretKey.Name,
-				Namespace: secretKey.Namespace,
-			},
+			Name:      secretKey.Name,
+			Namespace: secretKey.Namespace,
 		}
 
 		op, err := controllerutil.CreateOrUpdate(ctx, scope.rgnClient, regionalSecret, func() error {
@@ -1009,10 +1001,8 @@ func (r *ClusterDeploymentReconciler) ensureAuthConfigSecret(ctx context.Context
 	cd := scope.cd
 	secretName := r.getAuthConfigSecretName(cd.Name)
 	authConfigSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: cd.Namespace,
-		},
+		Name:      secretName,
+		Namespace: cd.Namespace,
 	}
 
 	if scope.auth == nil || scope.auth.clAuth == nil || !scope.auth.clAuth.Spec.HasAuthenticationConfiguration() {
@@ -1087,10 +1077,8 @@ func (r *ClusterDeploymentReconciler) ensureAuditPolicyConfigMap(ctx context.Con
 	cd := scope.cd
 	cmName := r.getAuditPolicyConfigMapName(cd.Name)
 	configMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      cmName,
-			Namespace: cd.Namespace,
-		},
+		Name:      cmName,
+		Namespace: cd.Namespace,
 	}
 
 	if scope.audit == nil || scope.audit.policy == nil {
@@ -1765,7 +1753,7 @@ func (r *ClusterDeploymentReconciler) aggregateCapiConditions(ctx context.Contex
 			Message:            err.Error(),
 		}
 		apimeta.SetStatusCondition(conditions, *capiCondition)
-		return true, fmt.Errorf("failed to get condition summary from Cluster %s: %w", client.ObjectKeyFromObject(cluster), err)
+		return false, err // already wrapped
 	}
 
 	if apimeta.SetStatusCondition(conditions, *capiCondition) {
@@ -2654,10 +2642,8 @@ func (r *ClusterDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			req := make([]ctrl.Request, len(clusterDeployments.Items))
 			for i, cluster := range clusterDeployments.Items {
 				req[i] = ctrl.Request{
-					NamespacedName: client.ObjectKey{
-						Namespace: cluster.Namespace,
-						Name:      cluster.Name,
-					},
+					Namespace: cluster.Namespace,
+					Name:      cluster.Name,
 				}
 			}
 			return req, nil
@@ -2717,10 +2703,8 @@ func (r *ClusterDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					}
 					for _, cluster := range clusterDeployments.Items {
 						req = append(req, ctrl.Request{
-							NamespacedName: client.ObjectKey{
-								Namespace: cluster.Namespace,
-								Name:      cluster.Name,
-							},
+							Namespace: cluster.Namespace,
+							Name:      cluster.Name,
 						})
 					}
 				}

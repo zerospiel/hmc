@@ -22,7 +22,6 @@ import (
 	. "github.com/onsi/gomega"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	apiserverv1 "k8s.io/apiserver/pkg/apis/apiserver/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -115,20 +114,16 @@ OybpVQ==
 	}
 
 	caSecret = &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: namespace,
-			Name:      caSecretName,
-		},
+		Namespace: namespace,
+		Name:      caSecretName,
 		Data: map[string][]byte{
 			caSecretKey: []byte(caCert),
 		},
 	}
 
 	invalidCASecret = &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: namespace,
-			Name:      caSecretName,
-		},
+		Namespace: namespace,
+		Name:      caSecretName,
 		Data: map[string][]byte{
 			"wrong-key": []byte(base64.StdEncoding.EncodeToString([]byte(caCert))),
 		},
@@ -137,9 +132,7 @@ OybpVQ==
 
 func TestClusterAuthenticationValidateCreate(t *testing.T) {
 	ctx := admission.NewContextWithRequest(t.Context(), admission.Request{
-		AdmissionRequest: admissionv1.AdmissionRequest{
-			Operation: admissionv1.Create,
-		},
+		Operation: admissionv1.Create,
 	})
 
 	tests := []struct {
@@ -162,13 +155,12 @@ func TestClusterAuthenticationValidateCreate(t *testing.T) {
 			clAuth: clusterauthentication.New(
 				clusterauthentication.WithNamespace(namespace),
 				clusterauthentication.WithAuthenticationConfiguration(validAuthConfig),
-				clusterauthentication.WithCASecretRef(kcmv1.SecretKeyReference{SecretReference: corev1.SecretReference{Name: caSecretName}, Key: caSecretKey})),
+				clusterauthentication.WithCASecretRef(kcmv1.SecretKeyReference{Name: caSecretName, Key: caSecretKey}),
+			),
 			existingObjects: []runtime.Object{
 				&corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: "another-namespace",
-						Name:      caSecretName,
-					},
+					Namespace: "another-namespace",
+					Name:      caSecretName,
 					Data: map[string][]byte{
 						caSecretKey: []byte(base64.StdEncoding.EncodeToString([]byte(caCert))),
 					},
@@ -181,7 +173,8 @@ func TestClusterAuthenticationValidateCreate(t *testing.T) {
 			clAuth: clusterauthentication.New(
 				clusterauthentication.WithNamespace(namespace),
 				clusterauthentication.WithAuthenticationConfiguration(validAuthConfig),
-				clusterauthentication.WithCASecretRef(kcmv1.SecretKeyReference{SecretReference: corev1.SecretReference{Name: caSecretName}, Key: caSecretKey})),
+				clusterauthentication.WithCASecretRef(kcmv1.SecretKeyReference{Name: caSecretName, Key: caSecretKey}),
+			),
 			existingObjects: []runtime.Object{invalidCASecret},
 			err:             fmt.Sprintf("secret %s/%s does not contain %s key", namespace, caSecretName, caSecretKey),
 		},
@@ -190,7 +183,8 @@ func TestClusterAuthenticationValidateCreate(t *testing.T) {
 			clAuth: clusterauthentication.New(
 				clusterauthentication.WithNamespace(namespace),
 				clusterauthentication.WithAuthenticationConfiguration(validAuthConfig),
-				clusterauthentication.WithCASecretRef(kcmv1.SecretKeyReference{SecretReference: corev1.SecretReference{Name: caSecretName}, Key: caSecretKey})),
+				clusterauthentication.WithCASecretRef(kcmv1.SecretKeyReference{Name: caSecretName, Key: caSecretKey}),
+			),
 			existingObjects: []runtime.Object{caSecret},
 		},
 	}
@@ -219,9 +213,7 @@ func TestClusterAuthenticationValidateCreate(t *testing.T) {
 
 func TestClusterAuthenticationValidateUpdate(t *testing.T) {
 	ctx := admission.NewContextWithRequest(t.Context(), admission.Request{
-		AdmissionRequest: admissionv1.AdmissionRequest{
-			Operation: admissionv1.Update,
-		},
+		Operation: admissionv1.Update,
 	})
 
 	const (
@@ -250,13 +242,12 @@ func TestClusterAuthenticationValidateUpdate(t *testing.T) {
 			newClAuth: clusterauthentication.New(
 				clusterauthentication.WithNamespace(namespace),
 				clusterauthentication.WithAuthenticationConfiguration(validAuthConfig),
-				clusterauthentication.WithCASecretRef(kcmv1.SecretKeyReference{SecretReference: corev1.SecretReference{Name: caSecretName}, Key: caSecretKey})),
+				clusterauthentication.WithCASecretRef(kcmv1.SecretKeyReference{Name: caSecretName, Key: caSecretKey}),
+			),
 			existingObjects: []runtime.Object{
 				&corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: "another-namespace",
-						Name:      caSecretName,
-					},
+					Namespace: "another-namespace",
+					Name:      caSecretName,
 					Data: map[string][]byte{
 						caSecretKey: []byte(base64.StdEncoding.EncodeToString([]byte(caCert))),
 					},
@@ -269,7 +260,8 @@ func TestClusterAuthenticationValidateUpdate(t *testing.T) {
 			newClAuth: clusterauthentication.New(
 				clusterauthentication.WithNamespace(namespace),
 				clusterauthentication.WithAuthenticationConfiguration(validAuthConfig),
-				clusterauthentication.WithCASecretRef(kcmv1.SecretKeyReference{SecretReference: corev1.SecretReference{Name: caSecretName}, Key: caSecretKey})),
+				clusterauthentication.WithCASecretRef(kcmv1.SecretKeyReference{Name: caSecretName, Key: caSecretKey}),
+			),
 			existingObjects: []runtime.Object{invalidCASecret},
 			err:             fmt.Sprintf("secret %s/%s does not contain %s key", namespace, caSecretName, caSecretKey),
 		},
@@ -278,7 +270,8 @@ func TestClusterAuthenticationValidateUpdate(t *testing.T) {
 			newClAuth: clusterauthentication.New(
 				clusterauthentication.WithNamespace(namespace),
 				clusterauthentication.WithAuthenticationConfiguration(validAuthConfig),
-				clusterauthentication.WithCASecretRef(kcmv1.SecretKeyReference{SecretReference: corev1.SecretReference{Name: caSecretName}, Key: caSecretKey})),
+				clusterauthentication.WithCASecretRef(kcmv1.SecretKeyReference{Name: caSecretName, Key: caSecretKey}),
+			),
 			existingObjects: []runtime.Object{caSecret},
 		},
 	}

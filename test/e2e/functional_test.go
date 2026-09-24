@@ -17,6 +17,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -250,10 +251,8 @@ var _ = Describe("Functional e2e tests", Label("provider:cloud", "provider:docke
 			waitForServiceSetVersions(ctx, kc, sd.Name, sd.Namespace, expectedVersions)
 
 			serviceSet := &kcmv1.ServiceSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      sd.Name,
-					Namespace: sd.Namespace,
-				},
+				Name:      sd.Name,
+				Namespace: sd.Namespace,
 			}
 			Expect(kc.CrClient.Get(ctx, crclient.ObjectKeyFromObject(serviceSet), serviceSet)).NotTo(HaveOccurred(), "failed to fetch ServiceSet")
 			Expect(serviceSet.Spec.Services).To(HaveLen(1))
@@ -319,10 +318,8 @@ var _ = Describe("Functional e2e tests", Label("provider:cloud", "provider:docke
 			waitForServiceSetVersions(ctx, kc, sd.Name, sd.Namespace, expectedVersions)
 
 			serviceSet := &kcmv1.ServiceSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      sd.Name,
-					Namespace: sd.Namespace,
-				},
+				Name:      sd.Name,
+				Namespace: sd.Namespace,
 			}
 			Expect(kc.CrClient.Get(ctx, crclient.ObjectKeyFromObject(serviceSet), serviceSet)).NotTo(HaveOccurred(), "failed to fetch ServiceSet")
 			Expect(serviceSet.Spec.Services).To(HaveLen(3))
@@ -352,10 +349,8 @@ var _ = Describe("Functional e2e tests", Label("provider:cloud", "provider:docke
 			waitForServiceDeployments(ctx, kc, sd, sd.Spec.ServiceSpec.Services)
 
 			serviceSet := &kcmv1.ServiceSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      sd.Name,
-					Namespace: sd.Namespace,
-				},
+				Name:      sd.Name,
+				Namespace: sd.Namespace,
 			}
 			Expect(kc.CrClient.Get(ctx, crclient.ObjectKeyFromObject(serviceSet), serviceSet)).NotTo(HaveOccurred(), "failed to fetch ServiceSet")
 			Expect(serviceSet.Spec.Services).To(HaveLen(1))
@@ -616,10 +611,8 @@ func waitForServiceDeployments(
 	services []kcmv1.Service,
 ) {
 	serviceSet := &kcmv1.ServiceSet{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      sd.Name,
-			Namespace: sd.Namespace,
-		},
+		Name:      sd.Name,
+		Namespace: sd.Namespace,
 	}
 
 	Eventually(func() error {
@@ -632,18 +625,18 @@ func waitForServiceDeployments(
 			stateMap[ss.Name] = ss
 		}
 
-		for i := len(services) - 1; i >= 0; i-- {
-			serviceState, ok := stateMap[services[i].Name]
+		for i, service := range slices.Backward(services) {
+			serviceState, ok := stateMap[service.Name]
 			if !ok {
 				continue
 			}
 
 			if serviceState.State != kcmv1.ServiceStateDeployed {
-				logs.Printf("Service %s in %s state: %s", services[i].Name, serviceState.State, serviceState.FailureMessage)
-				return fmt.Errorf("service %s in %s state: %s", services[i].Name, serviceState.State, serviceState.FailureMessage)
+				logs.Printf("Service %s in %s state: %s", service.Name, serviceState.State, serviceState.FailureMessage)
+				return fmt.Errorf("service %s in %s state: %s", service.Name, serviceState.State, serviceState.FailureMessage)
 			}
 
-			logs.Printf("Service %s is deployed", services[i].Name)
+			logs.Printf("Service %s is deployed", service.Name)
 			services = append(services[:i], services[i+1:]...)
 		}
 
@@ -723,10 +716,8 @@ func waitForServiceSetVersions(
 
 	Eventually(func() error {
 		serviceSet := &kcmv1.ServiceSet{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      clusterName,
-				Namespace: clusterNamespace,
-			},
+			Name:      clusterName,
+			Namespace: clusterNamespace,
 		}
 		Expect(kc.CrClient.Get(ctx, crclient.ObjectKeyFromObject(serviceSet), serviceSet)).NotTo(HaveOccurred(), "failed to fetch ServiceSet")
 

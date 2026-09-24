@@ -87,7 +87,8 @@ var (
 			&corev1.ObjectReference{
 				Kind: "AWSClusterStaticIdentity",
 				Name: "awsclid",
-			}),
+			},
+		),
 	)
 
 	providerInterface = providerinterface.NewAWSProviderInterface()
@@ -95,9 +96,7 @@ var (
 
 func TestClusterDeploymentValidateCreate(t *testing.T) {
 	ctx := admission.NewContextWithRequest(t.Context(), admission.Request{
-		AdmissionRequest: admissionv1.AdmissionRequest{
-			Operation: admissionv1.Create,
-		},
+		Operation: admissionv1.Create,
 	})
 
 	const (
@@ -150,7 +149,8 @@ func TestClusterDeploymentValidateCreate(t *testing.T) {
 						&corev1.ObjectReference{
 							Kind: "AWSClusterStaticIdentity",
 							Name: "awsclid",
-						}),
+						},
+					),
 					credential.WithRegion(rgn.Name),
 				),
 				template.NewClusterTemplate(
@@ -182,7 +182,8 @@ func TestClusterDeploymentValidateCreate(t *testing.T) {
 						&corev1.ObjectReference{
 							Kind: "AWSClusterStaticIdentity",
 							Name: "awsclid",
-						}),
+						},
+					),
 					credential.WithRegion(rgn.Name),
 				),
 				template.NewClusterTemplate(
@@ -394,7 +395,8 @@ func TestClusterDeploymentValidateCreate(t *testing.T) {
 						&corev1.ObjectReference{
 							Kind: "AWSClusterStaticIdentity",
 							Name: "awsclid",
-						}),
+						},
+					),
 				),
 				template.NewClusterTemplate(
 					template.WithName(testTemplateName),
@@ -422,7 +424,8 @@ func TestClusterDeploymentValidateCreate(t *testing.T) {
 						&corev1.ObjectReference{
 							Kind: "SomeOtherDummyClusterStaticIdentity",
 							Name: "otherdummyclid",
-						}),
+						},
+					),
 				),
 				management.NewManagement(
 					management.WithAvailableProviders(kcmv1.Providers{
@@ -482,9 +485,7 @@ func TestClusterDeploymentValidateUpdate(t *testing.T) {
 	)
 
 	ctx := admission.NewContextWithRequest(t.Context(), admission.Request{
-		AdmissionRequest: admissionv1.AdmissionRequest{
-			Operation: admissionv1.Update,
-		},
+		Operation: admissionv1.Update,
 	})
 
 	tests := []struct {
@@ -666,7 +667,8 @@ func TestClusterDeploymentValidateUpdate(t *testing.T) {
 						&corev1.ObjectReference{
 							Kind: "SomeOtherDummyClusterStaticIdentity",
 							Name: "otherdummyclid",
-						}),
+						},
+					),
 				),
 				management.NewManagement(
 					management.WithAvailableProviders(kcmv1.Providers{

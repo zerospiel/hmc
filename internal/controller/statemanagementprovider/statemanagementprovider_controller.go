@@ -22,9 +22,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/cel-go/cel"
-	"github.com/google/cel-go/common/decls"
-	"github.com/google/cel-go/common/types"
+	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/common/decls"
+	"cel.dev/cel-go/common/types"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -279,9 +279,7 @@ func (r *Reconciler) ensureClusterRole(ctx context.Context, smp *kcmv1.StateMana
 	// therefore the clusterRole object is empty on this step.
 	case err != nil:
 		clusterRole = &rbacv1.ClusterRole{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: smp.Name + clusterRoleSuffix,
-			},
+			Name:  smp.Name + clusterRoleSuffix,
 			Rules: rules,
 		}
 		err = r.Create(ctx, clusterRole)
@@ -314,10 +312,8 @@ func (r *Reconciler) ensureServiceAccount(ctx context.Context, smp *kcmv1.StateM
 	}
 
 	desiredSA := &corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      smp.Name + serviceAccountSuffix,
-			Namespace: r.SystemNamespace,
-		},
+		Name:      smp.Name + serviceAccountSuffix,
+		Namespace: r.SystemNamespace,
 	}
 
 	// we do not care about discrepancy in metadata as user may annotate or label produced objects,
@@ -362,9 +358,7 @@ func (r *Reconciler) ensureClusterRoleBinding(ctx context.Context, smp *kcmv1.St
 	}
 
 	desiredBinding := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: smp.Name + clusterRoleBindingSuffix,
-		},
+		Name: smp.Name + clusterRoleBindingSuffix,
 		RoleRef: rbacv1.RoleRef{
 			APIGroup: "rbac.authorization.k8s.io",
 			Kind:     "ClusterRole",

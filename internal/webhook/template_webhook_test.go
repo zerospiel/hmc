@@ -98,12 +98,11 @@ func TestProviderTemplateValidateDelete(t *testing.T) {
 					management.WithRelease(releaseName),
 					management.WithCoreComponents(&kcmv1.Core{}),
 					management.WithProviders(kcmv1.Provider{
-						Name: "cluster-api-provider-aws",
-						Component: kcmv1.Component{
-							Template: "cluster-api-provider-aws-0-0-2",
-						},
+						Name:     "cluster-api-provider-aws",
+						Template: "cluster-api-provider-aws-0-0-2",
 					},
-					)),
+					),
+				),
 				release.New(release.WithName(releaseName)),
 			},
 		},
@@ -193,7 +192,8 @@ func TestClusterTemplateValidateDelete(t *testing.T) {
 							{
 								Name: templateName,
 							},
-						}),
+						},
+					),
 				),
 			},
 			warnings: admission.Warnings{"The ClusterTemplate object can't be removed if it is managed by ClusterTemplateChain: test-chain"},
@@ -238,12 +238,10 @@ func TestClusterTemplateValidateDelete(t *testing.T) {
 				WithIndex(&kcmv1.ClusterDeployment{}, kcmv1.ClusterDeploymentTemplateIndexKey, kcmv1.ExtractTemplateNameFromClusterDeployment).
 				Build()
 			validator := &ClusterTemplateValidator{
-				TemplateValidator: TemplateValidator{
-					Client:            c,
-					SystemNamespace:   testSystemNamespace,
-					templateKind:      kcmv1.ClusterTemplateKind,
-					templateChainKind: kcmv1.ClusterTemplateChainKind,
-				},
+				Client:            c,
+				SystemNamespace:   testSystemNamespace,
+				templateKind:      kcmv1.ClusterTemplateKind,
+				templateChainKind: kcmv1.ClusterTemplateChainKind,
 			}
 
 			warn, err := validator.ValidateDelete(ctx, tt.template)
@@ -312,7 +310,8 @@ func TestServiceTemplateValidateDelete(t *testing.T) {
 							{
 								Name: templateName,
 							},
-						}),
+						},
+					),
 				),
 			},
 			warnings: admission.Warnings{"The ServiceTemplate object can't be removed if it is managed by ServiceTemplateChain: test-chain"},

@@ -72,16 +72,18 @@ func (r *ServiceTemplateReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, nil
 	}
 
-	if updated, err := labelsutil.AddKCMComponentLabel(ctx, r.Client, serviceTemplate); updated || err != nil {
-		if err != nil {
-			l.Error(err, "adding component label")
-		}
-		return ctrl.Result{Requeue: true}, err // generation has not changed, need explicit requeue
+	// the patch refreshes the object in place, so reconciliation can proceed within the same run
+	if _, err := labelsutil.AddKCMComponentLabel(ctx, r.Client, serviceTemplate); err != nil {
+		l.Error(err, "adding component label")
+		return ctrl.Result{}, err
 	}
 
 	defer func() {
 		if updErr := r.Status().Update(ctx, serviceTemplate); updErr != nil {
 			err = errors.Join(err, updErr)
+		}
+		if err != nil {
+			res = ctrl.Result{} // either requeue or error
 		}
 		l.Info("Reconciliation complete")
 	}()
@@ -109,10 +111,8 @@ func (r *ServiceTemplateReconciler) reconcileLocalSource(ctx context.Context, te
 	}
 
 	status := kcmv1.ServiceTemplateStatus{
-		TemplateStatusCommon: kcmv1.TemplateStatusCommon{
-			TemplateValidationStatus: kcmv1.TemplateValidationStatus{},
-			ObservedGeneration:       template.Generation,
-		},
+		TemplateValidationStatus: kcmv1.TemplateValidationStatus{},
+		ObservedGeneration:       template.Generation,
 	}
 
 	defer func() {
